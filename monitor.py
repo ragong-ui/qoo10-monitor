@@ -63,8 +63,10 @@ KEYWORDS = [
 SERPAPI_KEY       = os.getenv("SERPAPI_KEY", "")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 EMAIL_FROM        = os.getenv("EMAIL_FROM", "ragong@ebay.com")
-EMAIL_TO          = os.getenv("EMAIL_TO", "ragong@ebay.com")
+EMAIL_TO_LIST     = [a.strip() for a in os.getenv("EMAIL_TO", "ragong@ebay.com").split(",")]
 EMAIL_PASSWORD    = os.getenv("EMAIL_PASSWORD", "")
+
+STREAMLIT_URL = "https://qoo10-monitor-kpcsgufhoixrfo6ekyxmc7.streamlit.app/"
 
 RESULTS_DIR  = Path(__file__).parent / "results"
 LOGS_DIR     = Path(__file__).parent / "logs"
@@ -414,13 +416,18 @@ def send_email(path: Path, summary: str):
     try:
         msg            = MIMEMultipart()
         msg["From"]    = EMAIL_FROM
-        msg["To"]      = EMAIL_TO
+        msg["To"]      = ", ".join(EMAIL_TO_LIST)
         msg["Subject"] = f"[Qoo10 위조품 모니터링 / 偽物モニタリング] {datetime.now().strftime('%Y-%m-%d')} 레포트"
 
         body = (
             f"Qoo10 위조품 모니터링 레포트입니다 / Qoo10 偽物モニタリングレポートです。\n\n"
             f"{summary}\n\n"
-            f"첨부 Excel 파일을 확인해 주세요 / 添付のExcelファイルをご確認ください。"
+            f"첨부 Excel 파일을 확인해 주세요 / 添付のExcelファイルをご確認ください。\n\n"
+            f"─────────────────────────────\n"
+            f"📊 모니터링 대시보드 (실무자 공유용)\n"
+            f"{STREAMLIT_URL}\n"
+            f"오탐지여부 · Status 업데이트 후 💾 저장 버튼을 눌러주세요。\n"
+            f"─────────────────────────────"
         )
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -435,8 +442,8 @@ def send_email(path: Path, summary: str):
             s.ehlo()
             s.starttls()
             s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.send_message(msg)
-        print("  Email sent via Gmail.")
+            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+        print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
     except Exception as e:
         print(f"  [ERROR] Email failed: {e}")
 
@@ -453,17 +460,24 @@ def send_no_issue_email():
     try:
         msg            = MIMEMultipart()
         msg["From"]    = EMAIL_FROM
-        msg["To"]      = EMAIL_TO
+        msg["To"]      = ", ".join(EMAIL_TO_LIST)
         msg["Subject"] = f"[Qoo10 위조품 모니터링 / 偽物モニタリング] {datetime.now().strftime('%Y-%m-%d')} 이상없음 / 異常なし"
-        body = "오늘의 Qoo10 위조품 모니터링 결과, 새로운 검지가 없었습니다 / 本日のQoo10 偽物モニタリングの結果、新たな検知はありませんでした。\n\n이상없음 / 異常なし ✅"
+        body = (
+            f"오늘의 Qoo10 위조품 모니터링 결과, 새로운 검지가 없었습니다 / 本日のQoo10 偽物モニタリングの結果、新たな検知はありませんでした。\n\n"
+            f"이상없음 / 異常なし ✅\n\n"
+            f"─────────────────────────────\n"
+            f"📊 모니터링 대시보드 (실무자 공유용)\n"
+            f"{STREAMLIT_URL}\n"
+            f"─────────────────────────────"
+        )
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
         with smtplib.SMTP("smtp.gmail.com", 587) as s:
             s.ehlo()
             s.starttls()
             s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.send_message(msg)
-        print("  Email sent (異常なし).")
+            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+        print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
     except Exception as e:
         print(f"  [ERROR] Email failed: {e}")
 
