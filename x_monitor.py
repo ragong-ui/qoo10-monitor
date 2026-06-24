@@ -280,7 +280,7 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
     ws = wb.active
     ws.title = "X게시물 레포트"
 
-    headers = ["검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容", "Qoo10 상품 URL", "위험도 / 危険度", "오탐지여부", "Status", "검색확인 / 検索確認", "아카이브 / Archive"]
+    headers = ["검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容", "Qoo10 상품 URL", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status", "아카이브 / Archive"]
     ws.append(headers)
 
     hdr_fill  = PatternFill("solid", fgColor="2F5496")
@@ -298,19 +298,20 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
     for r, kr in zip(rows, kr_list):
         ws.append([
             r["date"], r["query"], r["url"],
-            _bilingual(r["summary"], kr), r["qoo10_link"], r["likelihood"], "", "New",
+            _bilingual(r["summary"], kr), r["qoo10_link"], r["likelihood"],
+            "", "", "New",   # G=검색확인(placeholder), H=오탐지여부, I=Status
         ])
         fill = high_fill if r["likelihood"] == "HIGH" else med_fill
         for c in ws[ws.max_row]:
             c.fill      = fill
             c.alignment = Alignment(wrap_text=True, vertical="top")
-        # I열: Yahoo! 리얼타임 검색결과 링크 (G=오탐지여부, H=Status 추가로 1열 이동)
+        # G열: Yahoo! 리얼타임 검색결과 링크
         if r.get("search_url"):
-            i_cell = ws.cell(row=ws.max_row, column=9)
-            i_cell.value = "Yahoo検索"
-            i_cell.hyperlink = r["search_url"]
-            i_cell.font = Font(bold=False, color="0563C1", underline="single")
-            i_cell.fill = fill
+            g_cell = ws.cell(row=ws.max_row, column=7)
+            g_cell.value = "Yahoo検索"
+            g_cell.hyperlink = r["search_url"]
+            g_cell.font = Font(bold=False, color="0563C1", underline="single")
+            g_cell.fill = fill
         # J열: Wayback Machine 아카이브 링크
         j_cell = ws.cell(row=ws.max_row, column=10)
         j_cell.value = "Wayback"
@@ -318,21 +319,21 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
         j_cell.font = Font(bold=False, color="0563C1", underline="single")
         j_cell.fill = fill
 
-    for col, w in zip("ABCDEFGHIJ", [12, 20, 55, 80, 50, 10, 12, 14, 12, 10]):
+    for col, w in zip("ABCDEFGHIJ", [12, 20, 55, 80, 50, 10, 12, 12, 14, 10]):
         ws.column_dimensions[col].width = w
 
     from openpyxl.comments import Comment
-    ws["G1"].comment = Comment("O = 오탐지 (오검지)\nX = 실검지 (위조품 확인)\n공백 = 미확인", "x_monitor")
+    ws["H1"].comment = Comment("O = 오탐지 (오검지)\nX = 실검지 (위조품 확인)\n공백 = 미확인", "x_monitor")
 
-    # G열 O/X 드롭다운
+    # H열 O/X 드롭다운 (오탐지여부)
     dv_ox = DataValidation(type="list", formula1='"O,X"', allow_blank=True)
     ws.add_data_validation(dv_ox)
-    dv_ox.add("G2:G10000")
+    dv_ox.add("H2:H10000")
 
-    # H열 Status 드롭다운
+    # I열 Status 드롭다운
     dv_status = DataValidation(type="list", formula1='"New,Reviewing,Actioned,Closed"', allow_blank=False)
     ws.add_data_validation(dv_status)
-    dv_status.add("H2:H10000")
+    dv_status.add("I2:I10000")
 
     ws.freeze_panes = "A2"
 

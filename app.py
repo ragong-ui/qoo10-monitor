@@ -148,7 +148,7 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
     # ── 에디터 준비 ──────────────────────────────────────────
     row_indices = filtered["_row_index"].tolist()
     display_cols = ["검색일", kw_col, "URL", "개요", "Qoo10 상품",
-                    "위험도", "오탐지여부", "Status", "검색확인", "아카이브"]
+                    "위험도", "검색확인", "오탐지여부", "Status", "아카이브"]
 
     editor_df = filtered[display_cols].copy()
     # 개요: 첫 줄(일본어)만 표시, 120자 제한

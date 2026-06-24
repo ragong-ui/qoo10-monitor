@@ -14,13 +14,13 @@ APPS_SCRIPT_URL = os.getenv("GOOGLE_APPS_SCRIPT_URL", "")
 
 HEADERS_GOOGLE = [
     "검색일 / 検索日", "검색 키워드", "URL", "개요 / 概要",
-    "Qoo10 상품 / 商品P", "위험도 / 危険度", "오탐지여부", "Status",
-    "검색확인 / 検索確認", "아카이브 / Archive",
+    "Qoo10 상품 / 商品P", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status",
+    "아카이브 / Archive",
 ]
 HEADERS_X = [
     "검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容",
-    "Qoo10 상품 URL", "위험도 / 危険度", "오탐지여부", "Status",
-    "검색확인 / 検索確認", "아카이브 / Archive",
+    "Qoo10 상품 URL", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status",
+    "아카이브 / Archive",
 ]
 
 
@@ -63,7 +63,7 @@ def write_to_sheets(rows: list, kr_list: list, sheet_type: str = "google"):
         batch_rows.append([
             row["date"], kw_or_q, row["url"],
             summary, row["qoo10_link"], row["likelihood"],
-            "", "New", search_f, wayback_f,
+            search_f, "", "New", wayback_f,
         ])
 
     payload = {
