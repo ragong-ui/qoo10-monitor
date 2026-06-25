@@ -58,7 +58,8 @@ def write_to_sheets(rows: list, kr_list: list, sheet_type: str = "google"):
             else f'=HYPERLINK("{search_url}","Yahoo検索")' if search_url
             else ""
         )
-        wayback_f = f'=HYPERLINK("https://web.archive.org/web/{row["url"]}","Wayback")'
+        wayback_url = row.get("wayback_url") or f"https://web.archive.org/web/{row['url']}"
+        wayback_f = f'=HYPERLINK("{wayback_url}","Wayback")'
 
         batch_rows.append([
             row["date"], kw_or_q, row["url"],

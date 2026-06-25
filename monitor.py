@@ -268,6 +268,39 @@ def run_searches() -> list[dict]:
     return rows
 
 
+# ── Wayback Machine 自動保存 ────────────────────────────
+def save_to_wayback(url: str) -> str:
+    """Wayback Machine에 URL 저장 요청. 성공 시 스냅샷 URL, 실패 시 빈 문자열."""
+    try:
+        r = requests.get(
+            f"https://web.archive.org/save/{url}",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+            allow_redirects=True,
+        )
+        if r.status_code == 200 and "/web/" in r.url:
+            return r.url
+    except Exception as e:
+        print(f"  [WARN] Wayback 저장 실패 ({url[:60]}): {e}")
+    return ""
+
+
+def save_wayback_batch(rows: list[dict]):
+    """탐지된 URL 전체를 Wayback Machine에 저장하고 wayback_url 필드 업데이트."""
+    import time
+    print(f"  Wayback Machine 저장 중 ({len(rows)}건)...")
+    for i, row in enumerate(rows):
+        url = row.get("url", "")
+        if not url:
+            continue
+        snapshot = save_to_wayback(url)
+        row["wayback_url"] = snapshot
+        status = snapshot if snapshot else "저장 실패"
+        print(f"  [{i+1}/{len(rows)}] {status[:80]}")
+        if i < len(rows) - 1:
+            time.sleep(2)
+
+
 # ── 번역 유틸리티 ───────────────────────────────────────
 def _translate_batch_ja_ko(texts: list[str]) -> list[str]:
     """일본어 텍스트를 한국어로 배치 번역. 실패 시 원문 반환."""
@@ -342,10 +375,10 @@ def save_excel(rows: list[dict]) -> Path:
             g_cell.hyperlink = row["search_url"]
             g_cell.font = Font(bold=False, color="0563C1", underline="single")
             g_cell.fill = fill
-        # J열: Wayback Machine 아카이브 링크
+        # J열: Wayback Machine 아카이브 링크 (저장된 스냅샷 URL 우선)
         j_cell = ws.cell(row=ws.max_row, column=10)
         j_cell.value = "Wayback"
-        j_cell.hyperlink = f"https://web.archive.org/web/{row['url']}"
+        j_cell.hyperlink = row.get("wayback_url") or f"https://web.archive.org/web/{row['url']}"
         j_cell.font = Font(bold=False, color="0563C1", underline="single")
         j_cell.fill = fill
 
@@ -518,6 +551,7 @@ def main():
         send_no_issue_email()
         send_slack("✅ 本日は新たな検知なし（異常なし）")
     else:
+        save_wayback_batch(rows)
         path, kr_list = save_excel(rows)
         send_email(path, summary)
         send_slack(summary, path)

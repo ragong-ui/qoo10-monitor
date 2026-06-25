@@ -17,8 +17,10 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 load_dotenv()
 
 EMAIL_FROM     = os.getenv("EMAIL_FROM", "")
-EMAIL_TO       = os.getenv("EMAIL_TO", "")
+EMAIL_TO_LIST  = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+
+STREAMLIT_URL = "https://qoo10-monitor-kpcsgufhoixrfo6ekyxmc7.streamlit.app/"
 
 BASE_DIR     = Path(__file__).parent
 RESULTS_DIR  = BASE_DIR / "results"
@@ -240,6 +242,40 @@ def run_x_searches() -> list[dict]:
     return rows
 
 
+# ── Wayback Machine 自動保存 ────────────────────────────
+def save_to_wayback(url: str) -> str:
+    """Wayback Machine에 URL 저장 요청. 성공 시 스냅샷 URL, 실패 시 빈 문자열."""
+    import requests as _req
+    try:
+        r = _req.get(
+            f"https://web.archive.org/save/{url}",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+            allow_redirects=True,
+        )
+        if r.status_code == 200 and "/web/" in r.url:
+            return r.url
+    except Exception as e:
+        print(f"  [WARN] Wayback 저장 실패 ({url[:60]}): {e}")
+    return ""
+
+
+def save_wayback_batch(rows: list[dict]):
+    """탐지된 URL 전체를 Wayback Machine에 저장하고 wayback_url 필드 업데이트."""
+    import time
+    print(f"  Wayback Machine 저장 중 ({len(rows)}건)...")
+    for i, row in enumerate(rows):
+        url = row.get("url", "")
+        if not url:
+            continue
+        snapshot = save_to_wayback(url)
+        row["wayback_url"] = snapshot
+        status = snapshot if snapshot else "저장 실패"
+        print(f"  [{i+1}/{len(rows)}] {status[:80]}")
+        if i < len(rows) - 1:
+            time.sleep(2)
+
+
 # ── 번역 유틸리티 ────────────────────────────────────────────
 def _translate_batch_ja_ko(texts: list[str]) -> list[str]:
     """일본어 텍스트를 한국어로 배치 번역. 실패 시 원문 반환."""
@@ -312,10 +348,10 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
             g_cell.hyperlink = r["search_url"]
             g_cell.font = Font(bold=False, color="0563C1", underline="single")
             g_cell.fill = fill
-        # J열: Wayback Machine 아카이브 링크
+        # J열: Wayback Machine 아카이브 링크 (저장된 스냅샷 URL 우선)
         j_cell = ws.cell(row=ws.max_row, column=10)
         j_cell.value = "Wayback"
-        j_cell.hyperlink = f"https://web.archive.org/web/{r['url']}"
+        j_cell.hyperlink = r.get("wayback_url") or f"https://web.archive.org/web/{r['url']}"
         j_cell.font = Font(bold=False, color="0563C1", underline="single")
         j_cell.fill = fill
 
@@ -357,7 +393,7 @@ def send_email(path: Path, summary: str, date_str: str):
     try:
         msg            = MIMEMultipart()
         msg["From"]    = EMAIL_FROM
-        msg["To"]      = EMAIL_TO
+        msg["To"]      = ", ".join(EMAIL_TO_LIST)
         msg["Subject"] = f"[X 위조품 모니터링 / 偽物モニタリング] {date_str} 레포트"
         body = (
             f"X (Twitter) Qoo10 위조품 모니터링 레포트입니다 / 偽物モニタリングレポートです。\n\n"
@@ -365,7 +401,12 @@ def send_email(path: Path, summary: str, date_str: str):
             f"첨부 Excel을 확인해 주세요 / 添付のExcelをご確認ください。\n\n"
             f"※ HIGH   = 위조품 키워드 + Qoo10 상품 URL 둘 다 확인 / 偽物系KW + Qoo10商品URL 両方確認\n"
             f"※ MEDIUM = 위조품 키워드만 (Qoo10 URL 없음) / 偽物系KWのみ（Qoo10 URLなし）\n\n"
-            f"[취득원: Yahoo! 리얼타임 검색 API / 직근 2일분 / Yahoo! リアルタイム検索 API / 直近2日分]"
+            f"[취득원: Yahoo! 리얼타임 검색 API / 직근 2일분 / Yahoo! リアルタイム検索 API / 直近2日分]\n\n"
+            f"─────────────────────────────\n"
+            f"📊 모니터링 대시보드 (실무자 공유용)\n"
+            f"{STREAMLIT_URL}\n"
+            f"오탐지여부 · Status 업데이트 후 💾 저장 버튼을 눌러주세요。\n"
+            f"─────────────────────────────"
         )
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -379,8 +420,8 @@ def send_email(path: Path, summary: str, date_str: str):
         with smtplib.SMTP("smtp.gmail.com", 587) as s:
             s.ehlo(); s.starttls()
             s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.send_message(msg)
-        print("  Email sent via Gmail.")
+            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+        print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
     except Exception as e:
         print(f"  [ERROR] Email: {e}")
 
@@ -397,18 +438,23 @@ def send_no_issue_email(date_str: str):
     try:
         msg            = MIMEMultipart()
         msg["From"]    = EMAIL_FROM
-        msg["To"]      = EMAIL_TO
+        msg["To"]      = ", ".join(EMAIL_TO_LIST)
         msg["Subject"] = f"[X 위조품 모니터링 / 偽物モニタリング] {date_str} 이상없음 / 異常なし"
-        msg.attach(MIMEText(
-            "오늘의 X Qoo10 위조품 모니터링 결과, 새로운 검지가 없었습니다 / 本日のX Qoo10偽物モニタリングの結果、新たな検知はありませんでした。\n\n"
-            "이상없음 / 異常なし ✅\n\n[취득원: Yahoo! 리얼타임 검색 API / 직근 2일분 / Yahoo! リアルタイム検索 API / 直近2日分]",
-            "plain", "utf-8"
-        ))
+        body = (
+            f"오늘의 X Qoo10 위조품 모니터링 결과, 새로운 검지가 없었습니다 / 本日のX Qoo10偽物モニタリングの結果、新たな検知はありませんでした。\n\n"
+            f"이상없음 / 異常なし ✅\n\n"
+            f"[취득원: Yahoo! 리얼타임 검색 API / 직근 2일분 / Yahoo! リアルタイム検索 API / 直近2日分]\n\n"
+            f"─────────────────────────────\n"
+            f"📊 모니터링 대시보드 (실무자 공유용)\n"
+            f"{STREAMLIT_URL}\n"
+            f"─────────────────────────────"
+        )
+        msg.attach(MIMEText(body, "plain", "utf-8"))
         with smtplib.SMTP("smtp.gmail.com", 587) as s:
             s.ehlo(); s.starttls()
             s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.send_message(msg)
-        print("  Email sent (異常なし).")
+            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+        print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
     except Exception as e:
         print(f"  [ERROR] Email: {e}")
 
@@ -433,6 +479,7 @@ def main():
     print(summary)
 
     if rows:
+        save_wayback_batch(rows)
         path, kr_list = save_excel(rows, date_str)
         send_email(path, summary, date_str)
         try:
