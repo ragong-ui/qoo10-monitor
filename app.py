@@ -220,6 +220,30 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
             else:
                 st.error("일부 항목 저장 실패. 다시 시도해주세요.")
 
+    # ── 개요 전체 내용 보기 (복사용) ─────────────────────────
+    st.divider()
+    st.caption("📋 개요 전체 내용 보기 / 복사")
+    sel_col, text_col = st.columns([2, 5])
+    with sel_col:
+        labels = [
+            f"{i+1}. [{filtered['위험도'].iloc[i]}] {str(filtered[kw_col].iloc[i])[:18]} ({str(filtered['검색일'].iloc[i])})"
+            for i in range(len(filtered))
+        ]
+        sel_idx = st.selectbox(
+            "행 선택",
+            range(len(labels)),
+            format_func=lambda i: labels[i],
+            key=f"detail_sel_{sheet_name}",
+        )
+    with text_col:
+        full_text = str(filtered["개요"].iloc[sel_idx])
+        st.text_area(
+            "개요 전체 (텍스트 선택 → Ctrl+C 로 복사)",
+            value=full_text,
+            height=160,
+            key=f"detail_text_{sheet_name}",
+        )
+
 
 # ── 메인 ─────────────────────────────────────────────────────
 def main():
