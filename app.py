@@ -151,17 +151,12 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
                     "위험도", "검색확인", "오탐지여부", "Status", "아카이브"]
 
     editor_df = filtered[display_cols].copy()
-    # 개요: 첫 줄(일본어)만 표시, 120자 제한
+    editor_df.insert(0, "선택", False)   # 체크박스 열
     editor_df["개요"] = editor_df["개요"].astype(str).apply(
         lambda x: (x.split("\n")[0])[:120]
     )
-    # 빈 값 정규화
-    editor_df["오탐지여부"] = editor_df["오탐지여부"].astype(str).replace(
-        {"nan": "", "None": ""}
-    )
-    editor_df["Status"] = editor_df["Status"].astype(str).replace(
-        {"nan": "New", "None": "New"}
-    )
+    editor_df["오탐지여부"] = editor_df["오탐지여부"].astype(str).replace({"nan": "", "None": ""})
+    editor_df["Status"] = editor_df["Status"].astype(str).replace({"nan": "New", "None": "New"})
 
     orig_fp = editor_df["오탐지여부"].tolist()
     orig_st = editor_df["Status"].tolist()
@@ -169,10 +164,11 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
     edited = st.data_editor(
         editor_df,
         column_config={
+            "선택":       st.column_config.CheckboxColumn("선택", width="small"),
             "URL":        st.column_config.LinkColumn("URL",      display_text="링크 🔗"),
             "검색확인":   st.column_config.LinkColumn("검색확인", display_text="検索 🔍"),
             "아카이브":   st.column_config.LinkColumn("아카이브", display_text="Wayback 📦"),
-            "개요":       st.column_config.TextColumn("개요",      width="large"),
+            "개요":       st.column_config.TextColumn("개요",     width="large"),
             "Qoo10 상품": st.column_config.TextColumn("Qoo10 상품"),
             "위험도":     st.column_config.TextColumn("위험도"),
             "오탐지여부": st.column_config.SelectboxColumn(
@@ -220,25 +216,17 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
             else:
                 st.error("일부 항목 저장 실패. 다시 시도해주세요.")
 
-    # ── 개요 전체 내용 보기 (복사용) ─────────────────────────
+    # ── 체크박스 선택 → 개요 전체 표시 ──────────────────────
     st.divider()
-    st.caption("📋 개요 전체 내용 보기 / 복사")
-    sel_col, text_col = st.columns([2, 5])
-    with sel_col:
-        labels = [
-            f"{i+1}. [{filtered['위험도'].iloc[i]}] {str(filtered[kw_col].iloc[i])[:18]} ({str(filtered['검색일'].iloc[i])})"
-            for i in range(len(filtered))
-        ]
-        sel_idx = st.selectbox(
-            "행 선택",
-            range(len(labels)),
-            format_func=lambda i: labels[i],
-            key=f"detail_sel_{sheet_name}",
-        )
-    with text_col:
-        full_text = str(filtered["개요"].iloc[sel_idx])
+    checked_rows = edited[edited["선택"] == True]
+
+    if checked_rows.empty:
+        st.caption("💡 '선택' 체크박스를 클릭하면 개요 전체 내용이 표시됩니다.")
+    else:
+        idx = checked_rows.index[0]
+        full_text = str(filtered["개요"].iloc[idx])
         st.text_area(
-            "개요 전체 (텍스트 선택 → Ctrl+C 로 복사)",
+            "📋 개요 전체 (텍스트 선택 → Ctrl+C 로 복사)",
             value=full_text,
             height=160,
             key=f"detail_text_{sheet_name}",
