@@ -216,21 +216,23 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
             else:
                 st.error("일부 항목 저장 실패. 다시 시도해주세요.")
 
-    # ── 체크박스 선택 → 개요 전체 표시 ──────────────────────
+    # ── 체크박스 선택 → 개요 전체 표시 (체크된 행 모두) ─────
     st.divider()
     checked_rows = edited[edited["선택"] == True]
 
     if checked_rows.empty:
         st.caption("💡 '선택' 체크박스를 클릭하면 개요 전체 내용이 표시됩니다.")
     else:
-        idx = checked_rows.index[0]
-        full_text = str(filtered["개요"].iloc[idx])
-        st.text_area(
-            "📋 개요 전체 (텍스트 선택 → Ctrl+C 로 복사)",
-            value=full_text,
-            height=160,
-            key=f"detail_text_{sheet_name}",
-        )
+        for row_i in checked_rows.index:
+            date = str(filtered["검색일"].iloc[row_i])
+            kw   = str(filtered[kw_col].iloc[row_i])
+            full_text = str(filtered["개요"].iloc[row_i])
+            st.text_area(
+                f"📋 [{date}] {kw}  —  개요 전체 (Ctrl+C 로 복사)",
+                value=full_text,
+                height=160,
+                key=f"detail_text_{sheet_name}_{row_i}",
+            )
 
 
 # ── 메인 ─────────────────────────────────────────────────────
