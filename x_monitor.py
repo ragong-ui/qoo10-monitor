@@ -250,7 +250,7 @@ def save_to_wayback(url: str) -> str:
         r = _req.get(
             f"https://web.archive.org/save/{url}",
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=30,
+            timeout=60,
             allow_redirects=True,
         )
         if r.status_code == 200 and "/web/" in r.url:
@@ -417,13 +417,22 @@ def send_email(path: Path, summary: str, date_str: str):
             part.add_header("Content-Disposition", f"attachment; filename={path.name}")
             msg.attach(part)
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.ehlo(); s.starttls()
-            s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
-        print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
+        import time
+        for attempt in range(1, 4):
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587) as s:
+                    s.ehlo(); s.starttls()
+                    s.login(EMAIL_FROM, EMAIL_PASSWORD)
+                    s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+                print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
+                break
+            except Exception as e:
+                print(f"  [ERROR] Email failed (attempt {attempt}/3): {e}")
+                if attempt < 3:
+                    print(f"  Retrying in 30s...")
+                    time.sleep(30)
     except Exception as e:
-        print(f"  [ERROR] Email: {e}")
+        print(f"  [ERROR] Email setup failed: {e}")
 
 
 def send_no_issue_email(date_str: str):
@@ -450,13 +459,22 @@ def send_no_issue_email(date_str: str):
             f"─────────────────────────────"
         )
         msg.attach(MIMEText(body, "plain", "utf-8"))
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.ehlo(); s.starttls()
-            s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
-        print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
+        import time
+        for attempt in range(1, 4):
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587) as s:
+                    s.ehlo(); s.starttls()
+                    s.login(EMAIL_FROM, EMAIL_PASSWORD)
+                    s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+                print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
+                break
+            except Exception as e:
+                print(f"  [ERROR] Email failed (attempt {attempt}/3): {e}")
+                if attempt < 3:
+                    print(f"  Retrying in 30s...")
+                    time.sleep(30)
     except Exception as e:
-        print(f"  [ERROR] Email: {e}")
+        print(f"  [ERROR] Email setup failed: {e}")
 
 
 # ── エントリポイント ────────────────────────────────────────

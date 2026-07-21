@@ -208,8 +208,8 @@ def run_searches() -> list[dict]:
             for r in search_keyword(query):
                 url = r.get("link", "")
 
-                # Qoo10 공식 페이지 제외 (PC·모바일 모두)
-                if url.startswith("https://www.qoo10.jp/") or url.startswith("https://m.qoo10.jp/"):
+                # Qoo10 공식 페이지 제외 (모든 서브도메인 포함 — special/www/m 등)
+                if re.search(r"https?://[^/]*qoo10\.jp/", url):
                     continue
 
                 # TikTok discover 집계 페이지 제외 (특정 게시물 아님)
@@ -275,7 +275,7 @@ def save_to_wayback(url: str) -> str:
         r = requests.get(
             f"https://web.archive.org/save/{url}",
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=30,
+            timeout=60,
             allow_redirects=True,
         )
         if r.status_code == 200 and "/web/" in r.url:
@@ -471,14 +471,23 @@ def send_email(path: Path, summary: str):
             part.add_header("Content-Disposition", f"attachment; filename={path.name}")
             msg.attach(part)
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
-        print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
+        import time
+        for attempt in range(1, 4):
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587) as s:
+                    s.ehlo()
+                    s.starttls()
+                    s.login(EMAIL_FROM, EMAIL_PASSWORD)
+                    s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+                print(f"  Email sent to {', '.join(EMAIL_TO_LIST)}")
+                break
+            except Exception as e:
+                print(f"  [ERROR] Email failed (attempt {attempt}/3): {e}")
+                if attempt < 3:
+                    print(f"  Retrying in 30s...")
+                    time.sleep(30)
     except Exception as e:
-        print(f"  [ERROR] Email failed: {e}")
+        print(f"  [ERROR] Email setup failed: {e}")
 
 
 def send_no_issue_email():
@@ -505,14 +514,23 @@ def send_no_issue_email():
         )
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(EMAIL_FROM, EMAIL_PASSWORD)
-            s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
-        print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
+        import time
+        for attempt in range(1, 4):
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587) as s:
+                    s.ehlo()
+                    s.starttls()
+                    s.login(EMAIL_FROM, EMAIL_PASSWORD)
+                    s.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+                print(f"  Email sent (異常なし) to {', '.join(EMAIL_TO_LIST)}")
+                break
+            except Exception as e:
+                print(f"  [ERROR] Email failed (attempt {attempt}/3): {e}")
+                if attempt < 3:
+                    print(f"  Retrying in 30s...")
+                    time.sleep(30)
     except Exception as e:
-        print(f"  [ERROR] Email failed: {e}")
+        print(f"  [ERROR] Email setup failed: {e}")
 
 
 # ── Slack 通知 ──────────────────────────────────────────
