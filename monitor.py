@@ -35,6 +35,17 @@ _FRAUD_WORDS = ["偽物", "ニセモノ", "にせもの", "パチモン", "パ�
                 "販売禁止商品", "規約違反", "強制返金",
                 "中国"]
 
+# Qoo10 詐欺クエリ専用 — 詐欺はクエリ語なので proximity_ok が常にパスしてしまう。
+# 「詐欺」単独を除外し、より具体的な被害・フィッシング系シグナルを要求する。
+_SCAM_SIGNALS = [w for w in _FRAUD_WORDS if w != "詐欺"] + [
+    "詐欺られ",    # 被害経験の過去形 (最悪Qoo10で詐欺られた)
+    "詐欺サイト",  # フィッシング・偽ショップ
+    "詐欺っぽ",    # 至急相談系 (詐欺っぽいのですが住所等入力してしまった)
+    "詐欺確定",    # 確定報告
+    "フィッシング",
+    "不正注文",
+]
+
 KEYWORDS = [
     # Qoo10 関連 — 複合クエリで検索精度を維持 + AND条件でスニペット検証
     {"query": "Qoo10 偽物",    "and_any": _FRAUD_WORDS},
@@ -49,7 +60,7 @@ KEYWORDS = [
     {"query": "Qoo10 模倣品",   "and_any": _FRAUD_WORDS},
     {"query": "Qoo10 コピー商品", "and_any": _FRAUD_WORDS},
     {"query": "Qoo10 模造品",   "and_any": _FRAUD_WORDS},
-    {"query": "Qoo10 詐欺",    "and_any": _FRAUD_WORDS},
+    {"query": "Qoo10 詐欺",    "and_any": _SCAM_SIGNALS},
     # メガ割 関連 — AND条件: 偽物系ワードと同時に存在する場合のみ検知
     {"query": "メガ割り", "and_any": _FRAUD_WORDS},
     {"query": "メガ割",   "and_any": _FRAUD_WORDS},
@@ -96,6 +107,8 @@ EXCLUDE_KEYWORDS = [
     "弊社が判断した場合",
     # コピー 오탐지 방지: キャッチコピー(캐치카피)에 "コピー"가 포함되어 오탐지됨
     "キャッチコピー",
+    # 詐欺 오탐지 방지: 메이크업 변신 관련 TikTok 용어 (Qoo10 상품 사기와 무관)
+    "詐欺メイク", "すっぴん詐欺",
 ]
 SOCIAL_DOMAINS = [
     "x.com", "twitter.com", "instagram.com", "tiktok.com",
