@@ -94,10 +94,25 @@ EXCLUDE_KEYWORDS = [
     "#PR", "#広告", "#ad", "#sponsored", "#タイアップ", "#案件",
     # Qoo10 공식 약관/캠페인 보일러플레이트 (사용자 피해 신고문에는 나오지 않음)
     "弊社が判断した場合",
+    # コピー 오탐지 방지: キャッチコピー(캐치카피)에 "コピー"가 포함되어 오탐지됨
+    "キャッチコピー",
 ]
 SOCIAL_DOMAINS = [
     "x.com", "twitter.com", "instagram.com", "tiktok.com",
-    "note.com", "ameblo.jp", "youtube.com", "threads.net",
+    "note.com", "ameblo.jp", "youtube.com", "threads.net", "threads.com",
+]
+# 오탐지율이 높은 도메인 제외 (Google Sheets 실적 데이터 기반 — 2026-07-23 추가)
+EXCLUDE_DOMAINS = [
+    "lipscosme.com",             # 화장품 리뷰/가격 집계 (16건 오탐지)
+    "ecnomikata.com",            # EC업계 뉴스 (13건 오탐지)
+    "bibicopy.net",              # Qoo10 무관 외부 사이트 (6건 오탐지)
+    "47news.jp",                 # 뉴스 사이트 (4건 오탐지)
+    "healthbusiness-online.com", # 비즈니스 뉴스 (4건 오탐지)
+    "indeed.com",                # 구인 사이트 (4건 오탐지)
+    "aucfan.com",                # 경매 가격 비교 (4건 오탐지)
+    "app-tatsujin.com",          # 앱 관련 사이트 (3건 오탐지)
+    "kigencheck.jp",             # 유통기한 체크 사이트 (2건 오탐지)
+    "bigankipatrol.com",         # 미용 제품 사이트 (2건 오탐지)
 ]
 
 QOO10_URL_RE = re.compile(r"https?://(?:www\.)?qoo10\.jp/\S+")
@@ -218,6 +233,10 @@ def run_searches() -> list[dict]:
 
                 # TikTok discover 집계 페이지 제외 (특정 게시물 아님)
                 if "tiktok.com/discover/" in url:
+                    continue
+
+                # 오탐지율이 높은 도메인 제외 (실적 데이터 기반)
+                if any(d in url for d in EXCLUDE_DOMAINS):
                     continue
 
                 # 이미 보고된 URL 중복 제외
