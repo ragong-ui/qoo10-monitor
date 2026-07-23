@@ -102,19 +102,24 @@ def save_url_history(new_urls: dict[str, str]):
     HISTORY_FILE.write_text(json.dumps(pruned, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def proximity_ok(text: str, query: str, fraud_words: list[str], window: int = 100) -> bool:
-    """クエリ語(Qoo10 / メガ割)とfake系ワードがwindow文字以内に共存するか確認。"""
+def proximity_ok(title: str, snippet: str, query: str, fraud_words: list[str], window: int = 100) -> bool:
+    """クエリ語(Qoo10 / メガ割)とfake系ワードがwindow文字以内に共存するか確認。
+    スニペット内の ' ... ' を文脈境界として扱い、各セグメントを独立チェックする。
+    """
     anchors = ["Qoo10"] if "Qoo10" in query else [query.split()[0], "Qoo10"]
-    for anchor in anchors:
-        pos = 0
-        while True:
-            idx = text.find(anchor, pos)
-            if idx == -1:
-                break
-            nearby = text[max(0, idx - window): idx + len(anchor) + window]
-            if any(fw in nearby for fw in fraud_words):
-                return True
-            pos = idx + 1
+    segs = re.split(r' \.\.\.+ ', snippet) if " ..." in snippet else [snippet]
+    for seg in segs:
+        check = title + " " + seg
+        for anchor in anchors:
+            pos = 0
+            while True:
+                idx = check.find(anchor, pos)
+                if idx == -1:
+                    break
+                nearby = check[max(0, idx - window): idx + len(anchor) + window]
+                if any(fw in nearby for fw in fraud_words):
+                    return True
+                pos = idx + 1
     return False
 
 
@@ -207,7 +212,7 @@ def run_x_searches() -> list[dict]:
                 continue
 
             # クエリ語とfake系ワードが100文字以内に共存するか確認
-            if not proximity_ok(text, query, _FRAUD_WORDS):
+            if not proximity_ok("", text, query, _FRAUD_WORDS):
                 continue
 
             has_qoo10_url = bool(QOO10_URL_RE.search(text))

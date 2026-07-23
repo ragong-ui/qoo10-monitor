@@ -154,21 +154,25 @@ def classify(result: dict) -> str:
     return "MEDIUM"
 
 
-def proximity_ok(text: str, query: str, fraud_words: list[str], window: int = 100) -> bool:
+def proximity_ok(title: str, snippet: str, query: str, fraud_words: list[str], window: int = 100) -> bool:
     """アンカー語(Qoo10 / クエリ先頭語)とfake系ワードがwindow文字以内に共存するか確認。
-    異なる文脈のテキストが混在するページ(知恵袋・TikTok等)の誤検知を防ぐ。
+    スニペット内の ' ... ' を文脈境界として扱い、各セグメントを独立チェックする。
+    知恵袋等の複数Q&A集計ページで異なる質問間のクロスマッチを防ぐ。
     """
     anchors = ["Qoo10"] if "Qoo10" in query else [query.split()[0], "Qoo10"]
-    for anchor in anchors:
-        pos = 0
-        while True:
-            idx = text.find(anchor, pos)
-            if idx == -1:
-                break
-            nearby = text[max(0, idx - window): idx + len(anchor) + window]
-            if any(fw in nearby for fw in fraud_words):
-                return True
-            pos = idx + 1
+    segs = re.split(r' \.\.\.+ ', snippet) if " ..." in snippet else [snippet]
+    for seg in segs:
+        check = title + " " + seg
+        for anchor in anchors:
+            pos = 0
+            while True:
+                idx = check.find(anchor, pos)
+                if idx == -1:
+                    break
+                nearby = check[max(0, idx - window): idx + len(anchor) + window]
+                if any(fw in nearby for fw in fraud_words):
+                    return True
+                pos = idx + 1
     return False
 
 
@@ -221,8 +225,10 @@ def run_searches() -> list[dict]:
                     continue
 
                 # Qoo10(またはクエリ語)とfake系ワードが100文字以内に共存するか確認
-                text = r.get("title", "") + " " + r.get("snippet", "")
-                if and_any and not proximity_ok(text, query, and_any):
+                title_s   = r.get("title", "")
+                snippet_s = r.get("snippet", "")
+                text      = title_s + " " + snippet_s
+                if and_any and not proximity_ok(title_s, snippet_s, query, and_any):
                     continue
 
                 # 見分け方/広告系は常に除外
