@@ -1,0 +1,314 @@
+<script>
+// ── 定数 ───────────────────────────────────────────────────────
+
+var AUTO_REFRESH_MS = 5 * 60 * 1000; // 5分
+var _refreshTimer   = null;
+var _refreshCount   = 0;
+
+// 国フラグマッピング
+var FLAG_MAP = {
+  "JP": "🇯🇵", "KR": "🇰🇷", "MULTI": "🌏",
+  "US": "🇺🇸", "CN": "🇨🇳", "EU": "🇪🇺",
+};
+
+// ステータス → バッジクラスマッピング
+var STATUS_CLASS = {
+  "new":           "badge-st-new",
+  "Reviewing":     "badge-st-reviewing",
+  "Actioned":      "badge-st-actioned",
+  "Closed":        "badge-st-closed",
+  "FalsePositive": "badge-st-falsepositive",
+};
+
+// ── 初期化 ──────────────────────────────────────────────────────
+
+document.addEventListener("DOMContentLoaded", function () {
+  _bindFilterEvents();
+  loadData(getFilters());
+  _startAutoRefresh();
+});
+
+// ── フィルター値取得 ────────────────────────────────────────────
+
+function getFilters() {
+  return {
+    severity: document.getElementById("f-severity").value,
+    status:   document.getElementById("f-status").value,
+    category: document.getElementById("f-category").value,
+    country:  document.getElementById("f-country").value,
+    q:        document.getElementById("f-search").value.trim(),
+    limit:    "200",
+  };
+}
+
+// ── フィルターイベント ──────────────────────────────────────────
+
+function _bindFilterEvents() {
+  ["f-severity", "f-status", "f-category", "f-country"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener("change", function () { loadData(getFilters()); });
+  });
+
+  var searchInput = document.getElementById("f-search");
+  if (searchInput) {
+    var _debounceTimer;
+    searchInput.addEventListener("input", function () {
+      clearTimeout(_debounceTimer);
+      _debounceTimer = setTimeout(function () { loadData(getFilters()); }, 350);
+    });
+  }
+
+  var resetBtn = document.getElementById("btn-reset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", function () {
+      document.getElementById("f-severity").value = "";
+      document.getElementById("f-status").value   = "";
+      document.getElementById("f-category").value = "";
+      document.getElementById("f-country").value  = "";
+      document.getElementById("f-search").value   = "";
+      loadData({});
+    });
+  }
+
+  var refreshBtn = document.getElementById("btn-refresh");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function () { loadData(getFilters()); });
+  }
+}
+
+// ── データ読み込み ─────────────────────────────────────────────
+
+/**
+ * Apps Script から getData を呼び出してテーブルを更新する。
+ * @param {Object} filters
+ */
+function loadData(filters) {
+  _setLoadingState(true);
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      _setLoadingState(false);
+      var data = (result && result.data) ? result.data : [];
+      renderSummary(data);
+      renderTable(data);
+      _updateRefreshMeta();
+    })
+    .withFailureHandler(function (err) {
+      _setLoadingState(false);
+      _showError("データの読み込みに失敗しました: " + (err.message || err));
+    })
+    ._handleGetData(filters);
+}
+
+// ── サマリー統計レンダリング ────────────────────────────────────
+
+function renderSummary(data) {
+  var counts = { total: data.length, critical: 0, high: 0, medium: 0, low: 0 };
+  data.forEach(function (row) {
+    var s = (row["重要度"] || "").toLowerCase();
+    if (counts[s] !== undefined) counts[s]++;
+  });
+
+  document.getElementById("stat-total").textContent    = counts.total;
+  document.getElementById("stat-critical").textContent = counts.critical;
+  document.getElementById("stat-high").textContent     = counts.high;
+  document.getElementById("stat-medium").textContent   = counts.medium;
+  document.getElementById("stat-low").textContent      = counts.low;
+}
+
+// ── テーブルレンダリング ────────────────────────────────────────
+
+function renderTable(data) {
+  var tbody = document.getElementById("tbl-body");
+  tbody.innerHTML = "";
+
+  if (!data || data.length === 0) {
+    var tr = document.createElement("tr");
+    tr.innerHTML = '<td colspan="8" class="state-box"><div class="icon">✅</div><p>該当するデータがありません</p></td>';
+    tbody.appendChild(tr);
+    return;
+  }
+
+  data.forEach(function (row) {
+    var tr = document.createElement("tr");
+    var sev = (row["重要度"] || "medium").toLowerCase();
+    tr.className = "sev-" + sev;
+    tr.dataset.rowIndex = row["_row_index"] || "";
+
+    tr.innerHTML = [
+      "<td>" + _fmtDate(row["検出日時"]) + "</td>",
+      "<td>" + _sevBadge(sev) + "</td>",
+      "<td>" + _esc(row["カテゴリ"] || "") + "</td>",
+      "<td>" + _fmtCountry(row["国"]) + "</td>",
+      "<td class='title-cell'>" + _fmtTitle(row) + "</td>",
+      "<td>" + _fmtSource(row["ソースURL"]) + "</td>",
+      "<td>" + _fmtBrand(row["ブランド"], row["マーケットプレイス"]) + "</td>",
+      "<td>" + _statusEdit(row) + "</td>",
+    ].join("");
+
+    tbody.appendChild(tr);
+  });
+
+  // ステータス保存イベントをバインド
+  tbody.querySelectorAll(".btn-save-status").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var rowEl = btn.closest("tr");
+      var rowIndex = parseInt(rowEl.dataset.rowIndex, 10);
+      var sel  = rowEl.querySelector(".status-select");
+      var notes = rowEl.querySelector(".notes-input");
+      updateStatus(rowIndex, sel ? sel.value : "", notes ? notes.value : "");
+    });
+  });
+}
+
+// ── ステータス保存 ──────────────────────────────────────────────
+
+function updateStatus(rowIndex, status, notes) {
+  if (!rowIndex) return;
+
+  google.script.run
+    .withSuccessHandler(function () {
+      _showToast("ステータスを保存しました (" + status + ")");
+    })
+    .withFailureHandler(function (err) {
+      _showToast("保存失敗: " + (err.message || err), true);
+    })
+    ._handleUpdateStatus({ action: "update_status", row_index: rowIndex, status: status, notes: notes });
+}
+
+// ── フォーマットヘルパー ────────────────────────────────────────
+
+function _fmtDate(raw) {
+  if (!raw) return '<span style="color:var(--text-muted)">—</span>';
+  try {
+    var d = new Date(raw);
+    if (isNaN(d)) return _esc(raw.substring(0, 16));
+    var ymd = d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+    var hm  = String(d.getHours()).padStart(2, "0") + ":" +
+      String(d.getMinutes()).padStart(2, "0");
+    return '<span style="font-size:12px">' + ymd + '</span><br>' +
+           '<span style="color:var(--text-muted);font-size:11px">' + hm + '</span>';
+  } catch (e) {
+    return _esc(raw.substring(0, 16));
+  }
+}
+
+function _sevBadge(sev) {
+  var labels = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var label  = labels[sev] || sev;
+  return '<span class="badge badge-' + sev + '">' + label + '</span>';
+}
+
+function _fmtCountry(country) {
+  var flag = FLAG_MAP[country] || "🌐";
+  return '<div class="country-cell"><span class="flag">' + flag +
+         '</span><span>' + _esc(country || "") + '</span></div>';
+}
+
+function _fmtTitle(row) {
+  var ko = _esc(row["タイトル(KO)"] || row["タイトル(JA)"] || "—");
+  var ja = _esc(row["タイトル(JA)"] || "");
+  var html = '<div class="title-ko">' + ko + '</div>';
+  if (ja && ja !== ko) {
+    html += '<div class="title-ja">' + ja + '</div>';
+  }
+  return html;
+}
+
+function _fmtSource(url) {
+  if (!url) return '<span style="color:var(--text-muted)">—</span>';
+  var display = url.replace(/^https?:\/\//, "").substring(0, 40);
+  if (url.length > 43) display += "…";
+  return '<a class="source-link" href="' + _esc(url) + '" target="_blank" rel="noopener">' +
+         display + '</a>';
+}
+
+function _fmtBrand(brand, mp) {
+  var parts = [];
+  if (brand) parts.push('<span>' + _esc(brand) + '</span>');
+  if (mp)    parts.push('<span style="color:var(--text-muted);font-size:12px">' + _esc(mp) + '</span>');
+  return parts.join("<br>") || '<span style="color:var(--text-muted)">—</span>';
+}
+
+function _statusEdit(row) {
+  var current = row["ステータス"] || "new";
+  var options  = ["new", "Reviewing", "Actioned", "Closed", "FalsePositive"];
+  var selHtml  = '<select class="status-select">';
+  options.forEach(function (opt) {
+    selHtml += '<option value="' + opt + '"' + (opt === current ? " selected" : "") + '>' + opt + '</option>';
+  });
+  selHtml += '</select>';
+
+  var notesVal = _esc(row["備考"] || "");
+  var notesHtml = '<input class="notes-input" type="text" placeholder="備考…" value="' + notesVal +
+                  '" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;' +
+                  'color:var(--text);padding:3px 7px;font-size:12px;width:100px;">';
+
+  return '<div class="status-edit">' + selHtml + notesHtml +
+         '<button class="btn btn-sm btn-success btn-save-status">保存</button></div>';
+}
+
+function _esc(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ── UI ユーティリティ ───────────────────────────────────────────
+
+function _setLoadingState(loading) {
+  var tbl   = document.getElementById("tbl-wrapper");
+  var loader = document.getElementById("loading-state");
+  if (loading) {
+    if (loader) loader.style.display = "block";
+    if (tbl)   tbl.style.opacity = "0.4";
+  } else {
+    if (loader) loader.style.display = "none";
+    if (tbl)   tbl.style.opacity = "1";
+  }
+}
+
+function _showError(msg) {
+  var el = document.getElementById("error-state");
+  if (el) {
+    el.textContent = msg;
+    el.style.display = "block";
+    setTimeout(function () { el.style.display = "none"; }, 6000);
+  }
+}
+
+function _showToast(msg, isError) {
+  var toast = document.getElementById("toast");
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.style.background = isError ? "var(--critical)" : "var(--low)";
+  toast.style.display = "block";
+  setTimeout(function () { toast.style.display = "none"; }, 3000);
+}
+
+function _updateRefreshMeta() {
+  _refreshCount++;
+  var el = document.getElementById("last-refresh");
+  if (el) {
+    var now = new Date();
+    el.textContent = "最終更新: " +
+      String(now.getHours()).padStart(2, "0") + ":" +
+      String(now.getMinutes()).padStart(2, "0") + ":" +
+      String(now.getSeconds()).padStart(2, "0") +
+      " (第" + _refreshCount + "回)";
+  }
+}
+
+// ── オートリフレッシュ ──────────────────────────────────────────
+
+function _startAutoRefresh() {
+  if (_refreshTimer) clearInterval(_refreshTimer);
+  _refreshTimer = setInterval(function () {
+    loadData(getFilters());
+  }, AUTO_REFRESH_MS);
+}
+</script>

@@ -1,0 +1,15 @@
+[
+  {
+    "source_id": "gdelt",
+    "external_id": "https://news.example.com/gdelt-article-001",
+    "url": "https://news.example.com/gdelt-article-001",
+    "title": "Qoo10운영 불법제품 단속 강화 — 일한 소비자 당국 협력",
+    "body": "日韓の消費者保護当局は越境EC上の偽造品・違法製品の取り締まり強化で合意した。Qoo10を含む主要プラットフォームへの監視が強化される見込み。",
+    "category": "regulation",
+    "country": "MULTI",
+    "published_at": "2026-07-21T06:00:00Z",
+    "marketplace": "Qoo10",
+    "brand": null,
+    "extra": {"domain": "news.example.com", "language": "Korean"}
+  }
+]

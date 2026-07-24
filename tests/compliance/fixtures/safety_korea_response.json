@@ -1,0 +1,19 @@
+[
+  {
+    "source_id": "safety_korea_kats",
+    "external_id": "KR-RECALL-2026-07-0142",
+    "url": "https://www.safetykorea.go.kr/recall/KR-2026-0142",
+    "title": "LED 마스크 뷰티기기 리콜 — 감전 위험 (KBeauty Tech Co.)",
+    "body": "국가기술표준원(KATS)은 KBeauty Tech Co. 제조 LED 마스크 뷰티기기(모델명: KBT-LED-500)에서 감전 위험이 확인되어 즉시 리콜을 명령했습니다. 해당 제품은 일본 Qoo10, 라쿠텐 등 해외 EC 플랫폼에서도 판매되었습니다.",
+    "category": "recall",
+    "country": "KR",
+    "published_at": "2026-07-22T10:00:00+09:00",
+    "marketplace": "Qoo10",
+    "brand": "KBeauty Tech",
+    "extra": {
+      "product_name": "LED 마스크 뷰티기기",
+      "model_number": "KBT-LED-500",
+      "recall_number": "KR-RECALL-2026-07-0142"
+    }
+  }
+]

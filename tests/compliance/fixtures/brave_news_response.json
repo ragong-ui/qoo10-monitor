@@ -1,0 +1,28 @@
+[
+  {
+    "source_id": "brave_news",
+    "external_id": "https://example-news.jp/qoo10-regulation-2026",
+    "url": "https://example-news.jp/qoo10-regulation-2026",
+    "title": "消費者庁、越境EC事業者Qoo10に対し景品表示法に基づく措置命令を検討",
+    "body": "消費者庁は2026年7月、越境EC大手Qoo10に対して景品表示法第7条に基づく措置命令を検討していることが明らかになった。偽物・模倣品の出品が相次いでいるとして、事業者への指導が本格化する見通し。",
+    "category": "regulation",
+    "country": "JP",
+    "published_at": "2026-07-23T09:00:00+09:00",
+    "marketplace": "Qoo10",
+    "brand": null,
+    "extra": {"query": "Qoo10 規制"}
+  },
+  {
+    "source_id": "brave_news",
+    "external_id": "https://example-news.jp/product-recall-2026",
+    "url": "https://example-news.jp/product-recall-2026",
+    "title": "韓国製美容機器 製品事故受け緊急回収 — NITE発表",
+    "body": "NITE（製品評価技術基盤機構）は2026年7月22日、韓国製LEDマスク美容機器で感電事故が発生したとして緊急回収を発表した。対象品はQoo10を含む複数ECサイトで販売されていた。",
+    "category": "recall",
+    "country": "JP",
+    "published_at": "2026-07-22T14:30:00+09:00",
+    "marketplace": "Qoo10",
+    "brand": "KBeauty Tech",
+    "extra": {"query": "製品リコール 日本"}
+  }
+]

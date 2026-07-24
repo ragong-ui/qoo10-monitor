@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🗾 Japan Compliance Briefing Dashboard</title>
+  <?!= include("Styles"); ?>
+</head>
+<body>
+
+<!-- ── サイトヘッダー ───────────────────────────────────────── -->
+<header class="site-header">
+  <h1>🗾 Japan Compliance Briefing Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+    <div class="refresh-status">
+      <div class="refresh-dot"></div>
+      <span id="last-refresh" class="header-meta">読み込み中…</span>
+    </div>
+    <span class="header-meta">5分自動更新</span>
+  </div>
+</header>
+
+<div class="page-wrapper">
+
+  <!-- ── エラー表示 ─────────────────────────────────────────── -->
+  <div id="error-state"
+       style="display:none;background:var(--critical-bg);color:var(--critical);
+              border:1px solid var(--critical);border-radius:6px;
+              padding:10px 16px;margin:12px 0;font-size:13px;">
+  </div>
+
+  <!-- ── サマリーバー ───────────────────────────────────────── -->
+  <div class="summary-bar">
+    <div class="stat-tile total">
+      <div>
+        <div class="stat-count" id="stat-total">—</div>
+        <div class="stat-label">Total</div>
+      </div>
+    </div>
+    <div class="stat-tile critical">
+      <div>
+        <div class="stat-count" id="stat-critical">—</div>
+        <div class="stat-label">Critical</div>
+      </div>
+    </div>
+    <div class="stat-tile high">
+      <div>
+        <div class="stat-count" id="stat-high">—</div>
+        <div class="stat-label">High</div>
+      </div>
+    </div>
+    <div class="stat-tile medium">
+      <div>
+        <div class="stat-count" id="stat-medium">—</div>
+        <div class="stat-label">Medium</div>
+      </div>
+    </div>
+    <div class="stat-tile low">
+      <div>
+        <div class="stat-count" id="stat-low">—</div>
+        <div class="stat-label">Low</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── フィルターパネル ──────────────────────────────────── -->
+  <div class="filter-panel">
+    <div class="filter-group">
+      <label for="f-severity">重要度</label>
+      <select id="f-severity">
+        <option value="">すべて</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="f-status">ステータス</label>
+      <select id="f-status">
+        <option value="">すべて</option>
+        <option value="new">New</option>
+        <option value="Reviewing">Reviewing</option>
+        <option value="Actioned">Actioned</option>
+        <option value="Closed">Closed</option>
+        <option value="FalsePositive">FalsePositive</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="f-category">カテゴリ</label>
+      <select id="f-category">
+        <option value="">すべて</option>
+        <option value="recall">Recall</option>
+        <option value="regulation">Regulation</option>
+        <option value="safety">Safety</option>
+        <option value="competitor">Competitor</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="f-country">国</label>
+      <select id="f-country">
+        <option value="">すべて</option>
+        <option value="JP">🇯🇵 JP</option>
+        <option value="KR">🇰🇷 KR</option>
+        <option value="MULTI">🌏 MULTI</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="f-search">テキスト検索</label>
+      <input type="text" id="f-search" placeholder="タイトル検索…">
+    </div>
+
+    <div class="filter-group" style="justify-content:flex-end;">
+      <label>&nbsp;</label>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="btn-reset">リセット</button>
+        <button class="btn btn-primary" id="btn-refresh">🔄 更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ローディング表示 ──────────────────────────────────── -->
+  <div id="loading-state"
+       style="display:none;text-align:center;padding:40px;color:var(--text-muted);">
+    <div style="font-size:24px;margin-bottom:8px;">⏳</div>
+    <div>データを読み込んでいます…</div>
+  </div>
+
+  <!-- ── データテーブル ─────────────────────────────────────── -->
+  <div id="tbl-wrapper" class="table-wrapper">
+    <table id="compliance-table">
+      <thead>
+        <tr>
+          <th style="min-width:110px;">検出日時</th>
+          <th style="min-width:80px;">重要度</th>
+          <th style="min-width:80px;">カテゴリ</th>
+          <th style="min-width:60px;">国</th>
+          <th style="min-width:220px;">タイトル</th>
+          <th style="min-width:160px;">ソース</th>
+          <th style="min-width:100px;">ブランド</th>
+          <th style="min-width:220px;">ステータス</th>
+        </tr>
+      </thead>
+      <tbody id="tbl-body">
+        <tr>
+          <td colspan="8" class="state-box">
+            <div class="icon">⏳</div>
+            <p>データを読み込んでいます…</p>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /page-wrapper -->
+
+<!-- ── トースト通知 ──────────────────────────────────────────── -->
+<div id="toast"
+     style="display:none;position:fixed;bottom:24px;right:24px;
+            color:#fff;padding:10px 20px;border-radius:6px;
+            font-size:13px;font-weight:600;z-index:9999;
+            box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+</div>
+
+<?!= include("Scripts"); ?>
+</body>
+</html>
