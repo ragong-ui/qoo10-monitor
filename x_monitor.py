@@ -4,15 +4,16 @@ Yahoo! リアルタイム検索内部 API を使用 (認証不要・無料・日
 エンドポイント: https://search.yahoo.co.jp/realtime/api/v1/pagination
 """
 
-import io, json, os, re, sys, time
+import io, json, os, re, socket, sys, time
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
+socket.setdefaulttimeout(60)
 
 load_dotenv()
 

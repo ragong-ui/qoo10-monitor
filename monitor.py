@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import socket
 import sys
 import requests
 import openpyxl
@@ -21,8 +22,14 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 
 # Windows CP949 환경에서 UTF-8 출력 강제
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# write_through=True: 파일 redirect 시 TextIOWrapper 버퍼를 거치지 않고 즉시 기록
+# (미설정 시 Task Scheduler 환경에서 로그가 비어있는 채로 스크립트가 hang할 수 있음)
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
+
+# DNS 조회를 포함한 전체 소켓 타임아웃 설정 (requests의 timeout은 DNS를 포함하지 않음)
+# 로그온 직후 네트워크 미초기화 상태에서 무한 hang 방지
+socket.setdefaulttimeout(60)
 
 load_dotenv()
 
