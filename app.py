@@ -167,7 +167,6 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
             "선택":       st.column_config.CheckboxColumn("선택", width="small"),
             "URL":        st.column_config.LinkColumn("URL",      display_text="링크 🔗"),
             "검색확인":   st.column_config.LinkColumn("검색확인", display_text="検索 🔍"),
-            "아카이브":   st.column_config.LinkColumn("아카이브", display_text="Wayback 📦"),
             "개요":       st.column_config.TextColumn("개요",     width="large"),
             "Qoo10 상품": st.column_config.TextColumn("Qoo10 상품"),
             "위험도":     st.column_config.TextColumn("위험도"),
