@@ -6,6 +6,7 @@ from .brave_search import BraveSearchCollector
 from .egov import EGovCollector
 from .caa import CAACollector
 from .nite import NITECollector
+from .nikkei import NikkeiCollector
 from .safety_korea import SafetyKoreaCollector
 from .gdelt import GDELTCollector
 
@@ -13,6 +14,7 @@ ALL_COLLECTORS = [
     EGovCollector,
     CAACollector,
     NITECollector,
+    NikkeiCollector,
     SafetyKoreaCollector,
     BraveSearchCollector,
     GDELTCollector,
@@ -23,6 +25,7 @@ __all__ = [
     "EGovCollector",
     "CAACollector",
     "NITECollector",
+    "NikkeiCollector",
     "SafetyKoreaCollector",
     "GDELTCollector",
     "ALL_COLLECTORS",

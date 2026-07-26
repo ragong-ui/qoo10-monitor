@@ -13,11 +13,12 @@ Sources (우선순위 순):
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import logging
 import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 from ..collector_base import BaseCollector, CollectorError
 
@@ -36,9 +37,9 @@ _MDCS_ENDPOINT = (
 # 식품의약품안전처 리콜 (식품 외 품목 포함)
 _MFDS_ENDPOINT = "http://openapi.foodsafetykorea.go.kr/api/{key}/C003/json/1/100"
 
-# 소비자24 리콜 목록 (공개 HTML)
-_SK_RECALL_LIST_URL = "https://www.safetykorea.go.kr/release/recall/list"
-_SK_RECALL_BASE_URL = "https://www.safetykorea.go.kr"
+# 소비자24 리콜 목록 (공개 HTML) — 2026.07 도메인 변경: .go.kr → .kr
+_SK_RECALL_LIST_URL = "https://www.safetykorea.kr/recall/recallBoard"
+_SK_RECALL_BASE_URL = "https://www.safetykorea.kr"
 
 # 일본 관련 키워드 (추가 필터링용 — 현재는 전체 포함)
 _JP_KEYWORDS = [
@@ -74,6 +75,7 @@ class SafetyKoreaCollector(BaseCollector):
                     log.info("[%s] MDCS API에서 %d건 수집", self.source_id, len(items))
                     return items
             except Exception as e:
+                self._record_partial_error(f"MDCS API 실패: {e}")
                 log.warning("[%s] MDCS API 실패: %s — MFDS 시도", self.source_id, e)
 
             # 2순위: 식품의약품안전처 API
@@ -83,11 +85,18 @@ class SafetyKoreaCollector(BaseCollector):
                     log.info("[%s] MFDS API에서 %d건 수집", self.source_id, len(items))
                     return items
             except Exception as e:
+                self._record_partial_error(f"MFDS API 실패: {e}")
                 log.warning("[%s] MFDS API 실패: %s — HTML 파싱으로 전환", self.source_id, e)
 
         # 3순위 (fallback): 소비자24 HTML 파싱
         log.info("[%s] 소비자24 HTML 파싱 시작", self.source_id)
-        return self._fetch_html_fallback()
+        try:
+            return self._fetch_html_fallback()
+        except CollectorError as exc:
+            if self._partial_errors:
+                upstream = "; ".join(self._partial_errors)
+                raise CollectorError(f"{upstream}; {exc}") from exc
+            raise
 
     # ── MDCS (data.go.kr) API ─────────────────────────────────────────────────
 
@@ -324,32 +333,62 @@ class SafetyKoreaCollector(BaseCollector):
             if len(cells) < 3:
                 return None
 
-            # 태그 제거
-            clean = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+            # 주석과 태그를 제거하고 HTML 엔티티를 복원한다.
+            clean = [re.sub(r'<!--.*?-->', '', c, flags=re.DOTALL) for c in cells]
+            clean = [html_lib.unescape(re.sub(r'<[^>]+>', '', c)).strip() for c in clean]
             clean = [re.sub(r'\s+', ' ', c).strip() for c in clean]
 
             # 빈 행 스킵
             if not any(clean):
                 return None
 
-            # 링크 추출
-            link_match = re.search(r'href=["\']([^"\']+)["\']', row_html, re.IGNORECASE)
-            detail_url = _SK_RECALL_BASE_URL
-            if link_match:
-                href = link_match.group(1)
-                detail_url = href if href.startswith("http") else urljoin(_SK_RECALL_BASE_URL, href)
+            # 목록의 href는 항상 "#none"이다. 실제 상세 페이지 키는
+            # onclick="goDetail(...)" 또는 hidden recallUid에 들어 있다.
+            uid_match = re.search(
+                r'name=["\']recallUid["\'][^>]*value=["\']([^"\']+)["\']',
+                row_html,
+                re.IGNORECASE,
+            )
+            if not uid_match:
+                uid_match = re.search(
+                    r'goDetail\(["\']([^"\']+)["\']\)',
+                    row_html,
+                    re.IGNORECASE,
+                )
+            recall_uid = uid_match.group(1).strip() if uid_match else ""
+
+            if recall_uid:
+                query = urlencode({"recallUid": recall_uid})
+                detail_url = f"{_SK_RECALL_BASE_URL}/recall/ajax/recallBoard?{query}"
+            else:
+                link_match = re.search(
+                    r'href=["\']([^"\']+)["\']',
+                    row_html,
+                    re.IGNORECASE,
+                )
+                href = link_match.group(1).strip() if link_match else ""
+                if not href or href == "#none":
+                    return None
+                detail_url = (
+                    href if href.startswith("http")
+                    else urljoin(_SK_RECALL_BASE_URL, href)
+                )
 
             # 날짜 컬럼 탐지 (YYYY-MM-DD 또는 YYYY.MM.DD 형식)
             date_str = ""
-            product_name = ""
-            recall_no = ""
+            product_name = clean[2] if len(clean) > 2 else ""
+            recall_no = clean[3] if len(clean) > 3 else ""
+            company = clean[4] if len(clean) > 4 else ""
 
             for cell in clean:
                 if re.match(r'\d{4}[-./]\d{2}[-./]\d{2}', cell):
                     date_str = cell
-                elif re.match(r'\d{4}-\d{4,}', cell) or re.match(r'[A-Z]{2,}-\d+', cell):
+                elif not recall_no and (
+                    re.match(r'\d{4}-\d{4,}', cell)
+                    or re.match(r'[A-Z]{2,}-\d+', cell)
+                ):
                     recall_no = cell
-                elif len(cell) > 5 and not recall_no:
+                elif len(cell) > 5 and not product_name:
                     product_name = product_name or cell
 
             # 제품명 확인
@@ -358,13 +397,15 @@ class SafetyKoreaCollector(BaseCollector):
             if not product_name or len(product_name) < 2:
                 return None
 
-            ext_id = recall_no or _make_hash(product_name + date_str)
+            ext_id = recall_uid or recall_no or _make_hash(product_name + date_str)
             title = f"[소비자24 리콜] {product_name}"
             body_parts = [f"제품명: {product_name}"]
             if recall_no:
                 body_parts.append(f"리콜 번호: {recall_no}")
             if date_str:
                 body_parts.append(f"리콜일: {date_str}")
+            if company:
+                body_parts.append(f"업체명: {company}")
             body_parts.append(f"출처: {detail_url}")
 
             return self._raw_item(
@@ -376,8 +417,12 @@ class SafetyKoreaCollector(BaseCollector):
                 category="recall",
                 country="KR",
                 published_at=_parse_date(date_str),
-                brand=None,
-                extra={"recall_no": recall_no},
+                brand=company or None,
+                extra={
+                    "recall_uid": recall_uid,
+                    "recall_no": recall_no,
+                    "product_name": product_name,
+                },
             )
         except Exception as e:
             log.debug("[%s] HTML 행 파싱 오류: %s", self.source_id, e)

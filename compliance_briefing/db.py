@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS source_health (
     source_id            TEXT PRIMARY KEY,
     last_checked         TEXT,
     last_success         TEXT,
+    last_status          TEXT NOT NULL DEFAULT 'unknown',
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     error_msg            TEXT
 );
@@ -105,6 +106,16 @@ class DB:
     def _migrate(self):
         with self.conn() as con:
             con.executescript(SCHEMA)
+            source_health_columns = {
+                row["name"] for row in con.execute(
+                    "PRAGMA table_info(source_health)"
+                )
+            }
+            if "last_status" not in source_health_columns:
+                con.execute(
+                    """ALTER TABLE source_health
+                       ADD COLUMN last_status TEXT NOT NULL DEFAULT 'unknown'"""
+                )
 
     # ── Runs ──────────────────────────────────────────────────
 
@@ -123,6 +134,15 @@ class DB:
                 """UPDATE runs SET finished_at=?, status=?, alert_count=?,
                    new_count=?, updated_count=?, error_msg=? WHERE run_id=?""",
                 (_now(), status, alert_count, new_count, updated_count, error_msg, run_id),
+            )
+
+    def fail_run(self, run_id: str, error_msg: str) -> None:
+        """Mark an interrupted run as failed without inventing result counts."""
+        with self.conn() as con:
+            con.execute(
+                """UPDATE runs SET finished_at=?, status='failed', error_msg=?
+                   WHERE run_id=?""",
+                (_now(), error_msg, run_id),
             )
 
     # ── Alerts ───────────────────────────────────────────────
@@ -177,8 +197,26 @@ class DB:
         new_status = "updated" if changes else "ongoing"
         with self.conn() as con:
             con.execute(
-                "UPDATE alerts SET last_seen=?, run_id=?, status=? WHERE fingerprint=?",
-                (now, alert["run_id"], new_status, alert["fingerprint"]),
+                """UPDATE alerts SET
+                   run_id=?, category=?, country=?, marketplace=?, entity=?,
+                   brand=?, product_name=?, model_number=?, severity=?, confidence=?,
+                   source_status=?, title_ko=?, title_ja=?, summary_ko=?, summary_ja=?,
+                   source_url=?, source_id=?, external_id=?, published_at=?,
+                   last_seen=?, status=?, extra_json=?
+                   WHERE fingerprint=?""",
+                (
+                    alert["run_id"], alert["category"], alert["country"],
+                    alert.get("marketplace"), alert["entity"], alert.get("brand"),
+                    alert.get("product_name"), alert.get("model_number"),
+                    alert["severity"], alert["confidence"],
+                    alert.get("source_status", "single_source"),
+                    alert["title_ko"], alert["title_ja"],
+                    alert["summary_ko"], alert["summary_ja"],
+                    alert["source_url"], alert["source_id"], alert["external_id"],
+                    alert.get("published_at"), now, new_status,
+                    json.dumps(alert.get("extra", {}), ensure_ascii=False),
+                    alert["fingerprint"],
+                ),
             )
             if changes:
                 con.executemany(
@@ -226,7 +264,15 @@ class DB:
 
     # ── Source health ─────────────────────────────────────────
 
-    def record_source_health(self, source_id: str, success: bool, error_msg: str | None = None) -> None:
+    def record_source_health(
+        self,
+        source_id: str,
+        status: str,
+        error_msg: str | None = None,
+    ) -> None:
+        if status not in {"ok", "partial", "failed"}:
+            raise ValueError(f"Invalid collection status: {status}")
+
         now = _now()
         with self.conn() as con:
             existing = con.execute(
@@ -234,20 +280,40 @@ class DB:
             ).fetchone()
 
             if existing is None:
-                failures = 0 if success else 1
+                failures = 1 if status == "failed" else 0
                 con.execute(
                     """INSERT INTO source_health
-                       (source_id, last_checked, last_success, consecutive_failures, error_msg)
-                       VALUES (?,?,?,?,?)""",
-                    (source_id, now, now if success else None, failures, error_msg),
+                       (source_id, last_checked, last_success, last_status,
+                        consecutive_failures, error_msg)
+                       VALUES (?,?,?,?,?,?)""",
+                    (
+                        source_id,
+                        now,
+                        now if status == "ok" else None,
+                        status,
+                        failures,
+                        error_msg,
+                    ),
                 )
             else:
-                failures = 0 if success else (existing["consecutive_failures"] + 1)
+                failures = (
+                    existing["consecutive_failures"] + 1
+                    if status == "failed"
+                    else 0
+                )
                 con.execute(
-                    """UPDATE source_health SET last_checked=?, consecutive_failures=?, error_msg=?
-                       {} WHERE source_id=?""".format(
-                        ", last_success=?" if success else ""
+                    """UPDATE source_health
+                       SET last_checked=?, last_status=?, consecutive_failures=?,
+                           error_msg=?,
+                           last_success=CASE WHEN ?='ok' THEN ? ELSE last_success END
+                       WHERE source_id=?""",
+                    (
+                        now,
+                        status,
+                        failures,
+                        error_msg,
+                        status,
+                        now,
+                        source_id,
                     ),
-                    ([now, failures, error_msg, now, source_id] if success
-                     else [now, failures, error_msg, source_id]),
                 )

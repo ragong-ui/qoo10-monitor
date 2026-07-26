@@ -41,10 +41,12 @@ _SOURCE_SEVERITY_MAP: dict[str, str] = {
     "mhlw": "high",
     "safety_korea_kats": "high",
     "safety_korea_kca": "medium",
-    # Medium — news / monitoring
+    # Medium — curated news (keyword-filtered at collection time)
     "brave_news": "medium",
-    "gdelt": "medium",
+    "nikkei": "medium",
     "ncac": "medium",
+    # Low — broad public news aggregator
+    "gdelt": "low",
 }
 
 _CATEGORY_SEVERITY_BOOST: dict[str, str] = {
@@ -71,7 +73,8 @@ def _max_severity(*sevs: str) -> str:
 
 _HIGH_CONFIDENCE_SOURCES = {"nite", "caa", "egov", "meti", "jftc", "ppc", "mhlw",
                              "safety_korea_mfds", "safety_korea_kats"}
-_MEDIUM_CONFIDENCE_SOURCES = {"safety_korea_kca", "ncac", "brave_news"}
+_MEDIUM_CONFIDENCE_SOURCES = {"safety_korea_kca", "ncac", "brave_news", "nikkei"}
+_LOW_CONFIDENCE_SOURCES = {"gdelt"}
 
 
 def score_alert(raw_item: dict) -> tuple[str, str]:
@@ -109,6 +112,8 @@ def score_alert(raw_item: dict) -> tuple[str, str]:
         confidence = "high"
     elif source_id in _MEDIUM_CONFIDENCE_SOURCES:
         confidence = "medium"
+    elif source_id in _LOW_CONFIDENCE_SOURCES:
+        confidence = "low"
     else:
         confidence = "low"
 

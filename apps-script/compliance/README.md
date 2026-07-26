@@ -54,7 +54,7 @@ apps-script/compliance/
    |---|---|
    | 설명 | `Japan Compliance Briefing v1` |
    | 실행 계정 | 나 (배포자) |
-   | 액세스 권한 | 조직 내 사용자 (도메인) |
+   | 액세스 권한 | 모든 사용자(익명 포함) |
 
 4. **배포** 클릭 → 표시된 **웹 앱 URL** 복사 (`https://script.google.com/macros/s/.../exec`)
 
@@ -70,10 +70,13 @@ apps-script/compliance/
 # C:\Users\ragong\qoo10-monitor\.env
 
 COMPLIANCE_APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycb.../exec
+COMPLIANCE_APPS_SCRIPT_TOKEN=충분히-긴-임의-문자열
 GOOGLE_SHEETS_EXPORT_ENABLED=true
 ```
 
-Python 코드에서는 `cfg.compliance_apps_script_url`로 접근합니다.
+동일한 토큰을 Git에서 제외된 `Secrets.gs`의
+`COMPLIANCE_API_TOKEN`에도 설정합니다. Python 코드는 URL과 토큰을 함께
+사용하며, 토큰이 없거나 불일치하면 모든 쓰기 요청을 거부합니다.
 
 ### API 호출 예시
 
@@ -129,15 +132,16 @@ data = resp.json()["data"]
 
 ---
 
-## 5. 권한 설정 (Domain vs Anyone)
+## 5. 권한 설정
 
 | 상황 | `access` 설정 | 설명 |
 |---|---|---|
-| 사내 팀 전용 (권장) | `"DOMAIN"` | 동일 Google Workspace 도메인 사용자만 접근 |
-| 외부 벤더·공개 | `"ANYONE"` | URL을 아는 누구나 접근 (주의) |
+| 현재 자동 실행 | `"ANYONE_ANONYMOUS"` | 페이지·읽기 API는 공개, 모든 쓰기는 공유 비밀 토큰 필수 |
+| 사내 팀 전용 | `"DOMAIN"` | 동일 Google Workspace 도메인 사용자만 접근하며 별도 OAuth 업로더 필요 |
 | 개발·테스트 | `"MYSELF"` | 배포자 본인만 접근 |
 
 `appsscript.json`의 `"access"` 값을 변경하고 **재배포**합니다.
+`ANYONE_ANONYMOUS`를 사용할 때는 반드시 `Secrets.gs` 토큰 검증을 유지합니다.
 
 ---
 
@@ -168,7 +172,7 @@ data = resp.json()["data"]
 
 ### "Authorization required" / 권한 오류
 - Apps Script 에디터에서 `doGet()` 함수를 직접 실행 → OAuth 동의 화면에서 승인
-- 또는 배포 시 액세스 권한을 `ANYONE`으로 변경 후 재배포
+- 자동 실행 배포는 `ANYONE_ANONYMOUS`와 쓰기 API 토큰을 함께 설정 후 재배포
 
 ### 시트가 자동 생성되지 않는 경우
 - 스크립트가 올바른 스프레드시트에 연결되어 있는지 확인
@@ -197,3 +201,17 @@ clasp deploy --description "v2"
 ```
 
 `scriptId`는 Apps Script 에디터 URL의 `/projects/<scriptId>/edit`에서 확인합니다.
+
+### 운영 프로젝트와 스프레드시트 고정
+
+- 운영 Google 계정: `lany052007@gmail.com`
+- 공식 Apps Script 프로젝트 ID: `1dYnlS14VXQ2PPQZgS6xteVJ94FuiFEIgSFR8gwCoDUpaAdI3pqm0TLbq`
+- 운영 스프레드시트 ID: `1rF_QXLRL7XXw34myMmXkw4wHSO7sCYXFSI9x_E74M5Q`
+- 시트 탭: `ComplianceBriefing`
+
+Web App에는 활성 스프레드시트 문맥이 없으므로 `Code.gs`의
+`COMPLIANCE_SPREADSHEET_ID`를 `SpreadsheetApp.openById()`로 직접 엽니다.
+Script Property나 활성 시트로 우회하지 않으므로 다른 프로젝트·시트로 잘못
+연결되는 것을 방지합니다. 배포 후 `/exec?action=getData&limit=1`이
+`{"data":[...]}`를 반환하는지 확인합니다. `batch_append`는 같은 `run_id`의
+완료된 행을 재사용하므로 안전하게 재시도할 수 있습니다.

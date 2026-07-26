@@ -1,46 +1,36 @@
 """
 Consumer Affairs Agency (消費者庁) collector — recalls, sanctions, consumer alerts.
 
-Strategy (in order of preference):
-  1. Parse the official RSS feed via feedparser.
-  2. If the RSS is unavailable or empty, fall back to scraping
-     https://www.caa.go.jp/notice/ with BeautifulSoup.
+Strategy:
+  1. Scrape year-specific archive page: /notice/archive/{year}/
+     Collects all /notice/entry/XXXXXX/ links (official notices, always relevant).
+  2. Scrape recall information site: https://www.recall.caa.go.jp/
+     Collects detail.php links (product recalls, highest priority).
 
-At least one of {feedparser, beautifulsoup4} must be installed.
+Both scrapes use static HTML — no feedparser or JS rendering required.
 """
 
 import logging
+import re
+from datetime import datetime
 
 from ..collector_base import BaseCollector, CollectorError
 
 log = logging.getLogger(__name__)
 
 try:
-    import feedparser as _feedparser  # type: ignore[import]
-    _FEEDPARSER_AVAILABLE = True
-except ImportError:
-    _FEEDPARSER_AVAILABLE = False
-
-try:
-    from bs4 import BeautifulSoup  # type: ignore[import]
+    from bs4 import BeautifulSoup
     _BS4_AVAILABLE = True
 except ImportError:
     _BS4_AVAILABLE = False
 
-_CAA_RSS_URL = "https://www.caa.go.jp/rss/news.rss"
-_CAA_NOTICE_URL = "https://www.caa.go.jp/notice/"
 _CAA_BASE_URL = "https://www.caa.go.jp"
+_CAA_RECALL_BASE = "https://www.recall.caa.go.jp"
 
 _FILTER_KEYWORDS: tuple[str, ...] = (
-    "回収",
-    "リコール",
-    "措置命令",
-    "課徴金",
-    "行政処分",
-    "注意喚起",
-    "景品表示",
-    "電子商取引",
-    "越境",
+    "回収", "リコール", "措置命令", "課徴金", "行政処分", "注意喚起",
+    "景品表示", "電子商取引", "越境", "消費者", "重大事故", "製品事故",
+    "製品安全", "公表", "改正", "規制", "通達",
 )
 
 
@@ -48,168 +38,157 @@ def _matches(text: str) -> bool:
     return any(kw in text for kw in _FILTER_KEYWORDS)
 
 
-def _resolve_url(href: str) -> str:
-    """Make an absolute URL from an href found on the CAA website."""
-    href = href.strip()
-    if href.startswith("http"):
-        return href
-    if href.startswith("//"):
-        return "https:" + href
-    if href.startswith("/"):
-        return _CAA_BASE_URL + href
-    return _CAA_BASE_URL + "/" + href
+def _current_year() -> int:
+    return datetime.now().year
+
+
+def _archive_url(year: int) -> str:
+    return f"{_CAA_BASE_URL}/notice/archive/{year}/"
 
 
 class CAACollector(BaseCollector):
     source_id = "caa"
 
     def _fetch_live(self) -> list[dict]:
-        if not _FEEDPARSER_AVAILABLE and not _BS4_AVAILABLE:
+        if not _BS4_AVAILABLE:
             raise CollectorError(
-                "Neither feedparser nor beautifulsoup4 is installed — "
-                "cannot run CAACollector. "
-                "Run: pip install feedparser beautifulsoup4"
+                "beautifulsoup4 is not installed. Run: pip install beautifulsoup4"
             )
 
-        # Attempt 1: RSS via feedparser
-        if _FEEDPARSER_AVAILABLE:
-            items = self._try_rss()
-            if items is not None:
-                return items
-
-        # Attempt 2: HTML scraping via BeautifulSoup
-        if _BS4_AVAILABLE:
-            return self._scrape_notice_page()
-
-        # feedparser was available but RSS failed, and bs4 is absent
-        raise CollectorError(
-            "CAA RSS feed is unavailable and beautifulsoup4 is not installed "
-            "for the HTML fallback. Run: pip install beautifulsoup4"
-        )
-
-    # ------------------------------------------------------------------
-    # Strategy 1: RSS
-    # ------------------------------------------------------------------
-
-    def _try_rss(self) -> list[dict] | None:
-        """
-        Attempt to collect items via the CAA RSS feed.
-        Returns a list on success (may be empty), or None to signal fallback.
-        """
-        log.debug("[%s] Trying RSS: %s", self.source_id, _CAA_RSS_URL)
-        try:
-            resp = self._get(_CAA_RSS_URL, timeout=20)
-        except Exception as exc:
-            log.warning(
-                "[%s] RSS request failed (%s) — falling back to HTML", self.source_id, exc
-            )
-            return None
-
-        feed = _feedparser.parse(resp.text)
-
-        if feed.bozo and not feed.entries:
-            log.warning(
-                "[%s] RSS could not be parsed (%s) — falling back to HTML",
-                self.source_id,
-                feed.bozo_exception,
-            )
-            return None
-
-        total = len(feed.entries)
         items: list[dict] = []
+        seen_urls: set[str] = set()
 
-        for entry in feed.entries:
-            title: str = (getattr(entry, "title", None) or "").strip()
-            body: str = (
-                getattr(entry, "summary", None)
-                or getattr(entry, "description", None)
-                or ""
-            ).strip()
+        # ── Source 1: CAA archive (official notices) ──────────────────
+        items.extend(self._scrape_archive(seen_urls))
 
-            if not _matches(title) and not _matches(body):
-                continue
+        # ── Source 2: recall.caa.go.jp front page ────────────────────
+        items.extend(self._scrape_recall_site(seen_urls))
 
-            url: str = (getattr(entry, "link", None) or "").strip()
-            external_id: str = url or (getattr(entry, "id", None) or title)
-            published_at: str | None = getattr(entry, "published", None)
+        if len(self._partial_errors) >= 2 and not items:
+            raise CollectorError("All CAA requests failed")
 
-            items.append(
-                self._raw_item(
-                    source_id=self.source_id,
-                    external_id=external_id,
-                    url=url,
-                    title=title,
-                    body=body,
-                    category="regulation",
-                    country="JP",
-                    published_at=published_at,
-                    extra={"method": "rss", "feed_url": _CAA_RSS_URL},
-                )
-            )
-
-        log.info(
-            "[%s] RSS: %d / %d entries matched keyword filter",
-            self.source_id,
-            len(items),
-            total,
-        )
+        log.info("[%s] Total: %d items from %d unique URLs", self.source_id, len(items), len(seen_urls))
         return items
 
     # ------------------------------------------------------------------
-    # Strategy 2: HTML scraping
+    # Source 1: CAA notice archive (year-specific)
     # ------------------------------------------------------------------
 
-    def _scrape_notice_page(self) -> list[dict]:
-        """
-        Scrape the CAA notices page and return all matching anchor links.
-        """
-        log.debug("[%s] Scraping HTML: %s", self.source_id, _CAA_NOTICE_URL)
-        resp = self._get(_CAA_NOTICE_URL, timeout=30)
-        soup = BeautifulSoup(resp.text, "html.parser")
+    def _scrape_archive(self, seen_urls: set) -> list[dict]:
+        year = _current_year()
+        url = _archive_url(year)
+        log.debug("[%s] Scraping archive: %s", self.source_id, url)
 
-        seen_urls: set[str] = set()
+        try:
+            resp = self._get(url, timeout=30)
+        except Exception as exc:
+            self._record_partial_error(f"Archive fetch failed: {exc}")
+            log.warning("[%s] Archive fetch failed (%s)", self.source_id, exc)
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
         items: list[dict] = []
 
         for a_tag in soup.find_all("a", href=True):
-            href: str = a_tag["href"]
-            if not href or href.startswith("#") or href.lower().startswith("javascript"):
-                continue
-
+            href: str = a_tag["href"].strip()
             title: str = a_tag.get_text(separator=" ", strip=True)
-            if not title or not _matches(title):
+
+            if not title or len(title) < 5:
                 continue
 
-            url = _resolve_url(href)
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
+            # Include all /notice/entry/XXXXXX/ links (all are official notices)
+            # Include /notice/statement/ etc. only if keyword matches
+            is_entry = bool(re.search(r"/notice/entry/\d+/", href))
+            is_other_notice = href.startswith("/notice/") and not is_entry
 
-            # Look for a nearby date string in a sibling or parent element
-            published_at: str | None = None
-            parent = a_tag.parent
-            if parent:
-                parent_text = parent.get_text(separator=" ", strip=True)
-                # Simple heuristic: grab the first "YYYY.MM.DD" or "YYYY年MM月DD日" pattern
-                import re as _re
-                date_match = _re.search(
-                    r"(\d{4}[年./]\d{1,2}[月./]\d{1,2})", parent_text
-                )
-                if date_match:
-                    published_at = date_match.group(1)
+            if not is_entry and not (is_other_notice and _matches(title)):
+                continue
+
+            abs_url = _CAA_BASE_URL + href if href.startswith("/") else href
+            if abs_url in seen_urls:
+                continue
+            seen_urls.add(abs_url)
+
+            # Date extraction from parent element
+            published_at = _extract_date(a_tag)
+
+            category = "recall" if any(kw in title for kw in ("回収", "リコール", "重大事故", "製品事故")) else "regulation"
 
             items.append(
                 self._raw_item(
                     source_id=self.source_id,
-                    external_id=url,
-                    url=url,
+                    external_id=abs_url,
+                    url=abs_url,
                     title=title,
                     body="",
-                    category="regulation",
+                    category=category,
                     country="JP",
                     published_at=published_at,
-                    extra={"method": "html_bs4", "source_url": _CAA_NOTICE_URL},
+                    extra={"method": "archive_html", "source_url": url},
                 )
             )
 
-        log.info("[%s] HTML scrape: %d matching links", self.source_id, len(items))
+        log.info("[%s] Archive scrape: %d items (year=%d)", self.source_id, len(items), year)
         return items
+
+    # ------------------------------------------------------------------
+    # Source 2: recall.caa.go.jp (product recall database)
+    # ------------------------------------------------------------------
+
+    def _scrape_recall_site(self, seen_urls: set) -> list[dict]:
+        log.debug("[%s] Scraping recall site: %s", self.source_id, _CAA_RECALL_BASE)
+        try:
+            resp = self._get(_CAA_RECALL_BASE + "/", timeout=30)
+        except Exception as exc:
+            self._record_partial_error(f"Recall site fetch failed: {exc}")
+            log.warning("[%s] Recall site fetch failed (%s) — skipping", self.source_id, exc)
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        items: list[dict] = []
+
+        for a_tag in soup.find_all("a", href=True):
+            href: str = a_tag["href"].strip()
+            title: str = a_tag.get_text(separator=" ", strip=True)
+
+            if "detail.php" not in href or not title or len(title) < 5:
+                continue
+
+            abs_url = (_CAA_RECALL_BASE + "/" + href.lstrip("/")) if not href.startswith("http") else href
+            if abs_url in seen_urls:
+                continue
+            seen_urls.add(abs_url)
+
+            # Extract recall type from title suffix (e.g. "- 回収", "- 修理")
+            recall_type = ""
+            if " - " in title:
+                recall_type = title.split(" - ")[-1].strip()
+
+            items.append(
+                self._raw_item(
+                    source_id=self.source_id,
+                    external_id=abs_url,
+                    url=abs_url,
+                    title=title,
+                    body=recall_type,
+                    category="recall",
+                    country="JP",
+                    published_at=None,
+                    extra={"method": "recall_site", "recall_type": recall_type},
+                )
+            )
+
+        log.info("[%s] Recall site: %d items", self.source_id, len(items))
+        return items
+
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+def _extract_date(a_tag) -> str | None:
+    """Try to extract a date from the parent/sibling elements of a link."""
+    parent = a_tag.parent
+    if not parent:
+        return None
+    text = parent.get_text(separator=" ", strip=True)
+    m = re.search(r"(\d{4}[年./]\d{1,2}[月./]\d{1,2}|\d{4}-\d{2}-\d{2})", text)
+    return m.group(1) if m else None

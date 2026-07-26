@@ -28,9 +28,16 @@ try:
 except ImportError:
     _BS4_AVAILABLE = False
 
-_NITE_RSS_URL = "https://www.nite.go.jp/jiko/news/rss.xml"
-_NITE_NEWS_URL = "https://www.nite.go.jp/jiko/news/"
+_NITE_PRESS_BASE = "https://www.nite.go.jp/jiko/chuikanki/press"
 _NITE_BASE_URL = "https://www.nite.go.jp"
+
+
+def _current_fy_url() -> str:
+    """Return NITE press release index URL for the current Japanese fiscal year."""
+    from datetime import datetime
+    now = datetime.now()
+    fy = now.year if now.month >= 4 else now.year - 1
+    return f"{_NITE_PRESS_BASE}/{fy}fy/index.html"
 
 
 def _resolve_url(href: str) -> str:
@@ -49,97 +56,27 @@ class NITECollector(BaseCollector):
     source_id = "nite"
 
     def _fetch_live(self) -> list[dict]:
-        if not _FEEDPARSER_AVAILABLE and not _BS4_AVAILABLE:
+        if not _BS4_AVAILABLE:
             raise CollectorError(
-                "Neither feedparser nor beautifulsoup4 is installed — "
+                "beautifulsoup4 is not installed — "
                 "cannot run NITECollector. "
-                "Run: pip install feedparser beautifulsoup4"
+                "Run: pip install beautifulsoup4"
             )
 
-        # Attempt 1: RSS
-        if _FEEDPARSER_AVAILABLE:
-            items = self._try_rss()
-            if items is not None:
-                return items
-
-        # Attempt 2: HTML scraping
-        if _BS4_AVAILABLE:
-            return self._scrape_news_page()
-
-        raise CollectorError(
-            "NITE RSS feed is unavailable and beautifulsoup4 is not installed "
-            "for the HTML fallback. Run: pip install beautifulsoup4"
-        )
+        return self._scrape_news_page()
 
     # ------------------------------------------------------------------
-    # Strategy 1: RSS
-    # ------------------------------------------------------------------
-
-    def _try_rss(self) -> list[dict] | None:
-        """
-        Attempt to collect items via the NITE RSS feed.
-        Returns a list on success (may be empty), or None to signal fallback.
-        """
-        log.debug("[%s] Trying RSS: %s", self.source_id, _NITE_RSS_URL)
-        try:
-            resp = self._get(_NITE_RSS_URL, timeout=20)
-        except Exception as exc:
-            log.warning(
-                "[%s] RSS request failed (%s) — falling back to HTML", self.source_id, exc
-            )
-            return None
-
-        feed = _feedparser.parse(resp.text)
-
-        if feed.bozo and not feed.entries:
-            log.warning(
-                "[%s] RSS could not be parsed (%s) — falling back to HTML",
-                self.source_id,
-                feed.bozo_exception,
-            )
-            return None
-
-        items: list[dict] = []
-
-        for entry in feed.entries:
-            title: str = (getattr(entry, "title", None) or "").strip()
-            url: str = (getattr(entry, "link", None) or "").strip()
-            external_id: str = url or (getattr(entry, "id", None) or title)
-            body: str = (
-                getattr(entry, "summary", None)
-                or getattr(entry, "description", None)
-                or ""
-            ).strip()
-            published_at: str | None = getattr(entry, "published", None)
-
-            items.append(
-                self._raw_item(
-                    source_id=self.source_id,
-                    external_id=external_id,
-                    url=url,
-                    title=title,
-                    body=body,
-                    category="recall",
-                    country="JP",
-                    published_at=published_at,
-                    extra={"method": "rss", "feed_url": _NITE_RSS_URL},
-                )
-            )
-
-        log.info("[%s] RSS: %d entries collected", self.source_id, len(items))
-        return items
-
-    # ------------------------------------------------------------------
-    # Strategy 2: HTML scraping
+    # HTML scraping (current fiscal year press releases)
     # ------------------------------------------------------------------
 
     def _scrape_news_page(self) -> list[dict]:
         """
-        Scrape the NITE news page and return all anchor links as recall items.
-        All links on the NITE incident news page are considered safety-relevant.
+        Scrape NITE press release index for the current fiscal year.
+        URL pattern: /jiko/chuikanki/press/{year}fy/index.html
         """
-        log.debug("[%s] Scraping HTML: %s", self.source_id, _NITE_NEWS_URL)
-        resp = self._get(_NITE_NEWS_URL, timeout=30)
+        news_url = _current_fy_url()
+        log.debug("[%s] Scraping HTML: %s", self.source_id, news_url)
+        resp = self._get(news_url, timeout=30)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         seen_urls: set[str] = set()
@@ -148,6 +85,11 @@ class NITECollector(BaseCollector):
         for a_tag in soup.find_all("a", href=True):
             href: str = a_tag["href"]
             if not href or href.startswith("#") or href.lower().startswith("javascript"):
+                continue
+
+            # Only collect actual press release pages (prs*.html), not year index pages
+            import re as _re
+            if not _re.search(r"/jiko/chuikanki/press/\d{4}fy/prs\d+\.html", href):
                 continue
 
             title: str = a_tag.get_text(separator=" ", strip=True)
@@ -181,7 +123,7 @@ class NITECollector(BaseCollector):
                     category="recall",
                     country="JP",
                     published_at=published_at,
-                    extra={"method": "html_bs4", "source_url": _NITE_NEWS_URL},
+                    extra={"method": "html_bs4", "source_url": news_url},
                 )
             )
 

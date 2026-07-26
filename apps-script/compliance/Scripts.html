@@ -97,7 +97,7 @@ function loadData(filters) {
       _setLoadingState(false);
       _showError("データの読み込みに失敗しました: " + (err.message || err));
     })
-    ._handleGetData(filters);
+    .getData(filters);
 }
 
 // ── サマリー統計レンダリング ────────────────────────────────────
@@ -166,14 +166,34 @@ function renderTable(data) {
 function updateStatus(rowIndex, status, notes) {
   if (!rowIndex) return;
 
+  var apiToken = sessionStorage.getItem("complianceApiToken") || "";
+  if (!apiToken) {
+    apiToken = window.prompt("更新用 API トークンを入力してください") || "";
+    if (!apiToken) return;
+    sessionStorage.setItem("complianceApiToken", apiToken);
+  }
+
   google.script.run
-    .withSuccessHandler(function () {
+    .withSuccessHandler(function (result) {
+      if (!result || result.status !== "ok") {
+        if (result && result.message === "Unauthorized") {
+          sessionStorage.removeItem("complianceApiToken");
+        }
+        _showToast("保存失敗: " + ((result && result.message) || "Unknown error"), true);
+        return;
+      }
       _showToast("ステータスを保存しました (" + status + ")");
     })
     .withFailureHandler(function (err) {
       _showToast("保存失敗: " + (err.message || err), true);
     })
-    ._handleUpdateStatus({ action: "update_status", row_index: rowIndex, status: status, notes: notes });
+    .updateStatus({
+      action: "update_status",
+      row_index: rowIndex,
+      status: status,
+      notes: notes,
+      api_token: apiToken
+    });
 }
 
 // ── フォーマットヘルパー ────────────────────────────────────────
@@ -219,10 +239,18 @@ function _fmtTitle(row) {
 
 function _fmtSource(url) {
   if (!url) return '<span style="color:var(--text-muted)">—</span>';
+  try {
+    var parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("unsupported protocol");
+    }
+  } catch (e) {
+    return '<span style="color:var(--text-muted)">無効なURL</span>';
+  }
   var display = url.replace(/^https?:\/\//, "").substring(0, 40);
   if (url.length > 43) display += "…";
   return '<a class="source-link" href="' + _esc(url) + '" target="_blank" rel="noopener">' +
-         display + '</a>';
+         _esc(display) + '</a>';
 }
 
 function _fmtBrand(brand, mp) {

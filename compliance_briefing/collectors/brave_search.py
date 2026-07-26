@@ -9,35 +9,43 @@ import logging
 import time
 
 from ..collector_base import BaseCollector, CollectorError
+from ..filter import is_blocked_url
 
 log = logging.getLogger(__name__)
 
 _BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
 
-# Each group: (group_label, category, list_of_queries)
-_QUERY_GROUPS: list[tuple[str, str, list[str]]] = [
+# Each group: (group_label, category, freshness, list_of_queries)
+# freshness: "pd" = past day, "pw" = past week, "pm" = past month
+_QUERY_GROUPS: list[tuple[str, str, str, list[str]]] = [
     (
         "regulation",
         "regulation",
+        "pd",  # regulatory actions are time-sensitive
         [
             "Qoo10 規制",
             "越境EC 規制 日本",
             "電子商取引法 改正",
             "景品表示法 措置命令",
+            "消費者庁 措置命令",
+            "消費者庁 行政処分",
         ],
     ),
     (
         "safety_jp",
         "safety",
+        "pd",  # product safety recalls need immediate detection
         [
             "製品リコール 日本",
             "消費者庁 回収命令",
+            "消費者庁 重大製品事故",
             "NITE 製品事故",
         ],
     ),
     (
         "safety_kr",
         "safety",
+        "pw",  # KR safety news in JP context is slower-moving
         [
             "안전 리콜 한국제품 일본",
             "한국 소비자원 일본",
@@ -46,6 +54,7 @@ _QUERY_GROUPS: list[tuple[str, str, list[str]]] = [
     (
         "competitor",
         "competitor",
+        "pw",  # competitor news is less time-critical
         [
             "Qoo10 行政処分",
             "Rakuten 規制",
@@ -82,17 +91,21 @@ class BraveSearchCollector(BaseCollector):
 
         seen_urls: set[str] = set()
         items: list[dict] = []
+        request_count = 0
+        failed_requests = 0
 
-        for group_label, category, queries in _QUERY_GROUPS:
+        for group_label, category, freshness, queries in _QUERY_GROUPS:
             for query in queries:
-                log.debug("[%s] Querying: %r  group=%s", self.source_id, query, group_label)
+                request_count += 1
+                log.debug("[%s] Querying: %r  group=%s freshness=%s",
+                          self.source_id, query, group_label, freshness)
 
                 params = {
                     "q": query,
                     "count": self.cfg.brave_results_per_query,
                     "country": "jp",
                     "lang": "ja",
-                    "freshness": "pd",
+                    "freshness": freshness,
                 }
 
                 try:
@@ -104,6 +117,8 @@ class BraveSearchCollector(BaseCollector):
                     )
                     data = resp.json()
                 except Exception as exc:
+                    failed_requests += 1
+                    self._record_partial_error(f"Query {query!r} failed: {exc}")
                     log.warning(
                         "[%s] Query %r failed (%s) — skipping",
                         self.source_id,
@@ -121,6 +136,9 @@ class BraveSearchCollector(BaseCollector):
                 for article in results:
                     url = (article.get("url") or "").strip()
                     if not url or url in seen_urls:
+                        continue
+                    if is_blocked_url(url):
+                        log.debug("[%s] blocked: %s", self.source_id, url)
                         continue
                     seen_urls.add(url)
 
@@ -158,6 +176,9 @@ class BraveSearchCollector(BaseCollector):
 
                 # Respect Brave rate limits — 1 req/s on free tier
                 time.sleep(0.5)
+
+        if request_count and failed_requests == request_count:
+            raise CollectorError("All Brave Search queries failed")
 
         log.info(
             "[%s] Finished: %d unique items across %d query groups",

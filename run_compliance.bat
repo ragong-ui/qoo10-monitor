@@ -2,9 +2,8 @@
 cd /d "%~dp0"
 set PYTHONIOENCODING=utf-8
 
-REM Redirect stdout/stderr to log file (date-stamped)
-set LOGDATE=%DATE:~0,4%%DATE:~5,2%%DATE:~8,2%
-set LOGFILE=logs\compliance_%LOGDATE%.log
-
-python -u compliance_main.py >> "%LOGFILE%" 2>&1
-echo Exit code: %ERRORLEVEL% >> "%LOGFILE%" 2>&1
+REM compliance_main.py owns the date-stamped log file.
+REM Redirecting here too locks the same file on Windows.
+python -u compliance_main.py
+set "EXIT_CODE=%ERRORLEVEL%"
+exit /b %EXIT_CODE%

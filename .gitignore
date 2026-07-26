@@ -1,9 +1,16 @@
 .env
+.env.*
+!.env.example
 credentials.json
 google_token.json
+apps-script/compliance/Secrets.gs
 .streamlit/secrets.toml
 __pycache__/
 *.pyc
 *.pyo
 results/
 logs/
+compliance_briefing*.db
+compliance_briefing*.db.bak*
+*.db-wal
+*.db-shm

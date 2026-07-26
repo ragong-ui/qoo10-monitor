@@ -17,6 +17,17 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 # Cover DNS-level hangs that requests.timeout doesn't catch
 socket.setdefaulttimeout(60)
 
+# Requests otherwise uses certifi instead of the Windows trusted root store.
+_windows_truststore_enabled = False
+if sys.platform == "win32":
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        _windows_truststore_enabled = True
+    except ImportError:
+        pass
+
 BASE_DIR = Path(__file__).parent
 LOGS_DIR = BASE_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
@@ -42,6 +53,11 @@ log = logging.getLogger(__name__)
 def main() -> int:
     log.info("=" * 60)
     log.info("Japan Marketplace Compliance Briefing — START")
+    if sys.platform == "win32":
+        if _windows_truststore_enabled:
+            log.info("TLS: Windows trust store enabled")
+        else:
+            log.warning("TLS: truststore is not installed; using the certifi CA bundle")
 
     try:
         from compliance_briefing import ComplianceConfig, CompliancePipeline
@@ -53,7 +69,7 @@ def main() -> int:
 
         log.info("Result: %s", result)
         log.info("Japan Marketplace Compliance Briefing — END")
-        return 0
+        return 1 if result.get("status") == "failed" else 0
     except KeyboardInterrupt:
         log.warning("Interrupted by user")
         return 130

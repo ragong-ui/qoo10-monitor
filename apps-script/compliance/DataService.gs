@@ -11,7 +11,7 @@
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
 function getSheetOrCreate(name, headers) {  // eslint-disable-line no-redeclare
-  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var ss    = _getSpreadsheet();
   var sheet = ss.getSheetByName(name);
 
   if (!sheet) {
@@ -137,7 +137,7 @@ function getHeaders(sheet) {
  * @returns {GoogleAppsScript.Spreadsheet.Sheet|null}
  */
 function _getSheetByName(name) {
-  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var ss    = _getSpreadsheet();
   return ss.getSheetByName(name) || null;
 }
 

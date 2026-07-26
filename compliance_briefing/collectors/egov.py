@@ -20,7 +20,7 @@ try:
 except ImportError:
     _FEEDPARSER_AVAILABLE = False
 
-_EGOV_RSS_URL = "https://www.e-gov.go.jp/rss/news.rss"
+_EGOV_RSS_URL = "https://www.e-gov.go.jp/news/news.xml"
 
 # Title must contain at least one of these to be included
 _FILTER_KEYWORDS: tuple[str, ...] = (

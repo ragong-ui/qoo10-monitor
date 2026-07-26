@@ -20,6 +20,16 @@ def _bool(key: str, default: bool = False) -> bool:
     return default
 
 
+def _int(key: str, default: int, minimum: int = 1) -> int:
+    val = os.getenv(key, "").strip()
+    if not val:
+        return default
+    try:
+        return max(minimum, int(val))
+    except ValueError:
+        return default
+
+
 @dataclass
 class ComplianceConfig:
     # ── Feature flags ─────────────────────────────────────────
@@ -32,6 +42,19 @@ class ComplianceConfig:
     brave_api_key: str = field(default_factory=lambda: os.getenv("BRAVE_SEARCH_API_KEY", ""))
     brave_results_per_query: int = 10
     gdelt_max_records: int = 50
+    gdelt_time_budget_seconds: int = field(
+        default_factory=lambda: _int("GDELT_TIME_BUDGET_SECONDS", 60)
+    )
+    gdelt_retry_after_cap_seconds: int = field(
+        default_factory=lambda: _int("GDELT_RETRY_AFTER_CAP_SECONDS", 15)
+    )
+    nikkei_lookback_days: int = field(
+        default_factory=lambda: _int("NIKKEI_LOOKBACK_DAYS", 7)
+    )
+    collector_enabled_overrides: dict[str, bool] = field(
+        default_factory=dict,
+        repr=False,
+    )
 
     # ── Safety Korea (data.go.kr) ─────────────────────────────
     safety_korea_api_key: str = field(default_factory=lambda: os.getenv("SAFETY_KOREA_API_KEY", ""))
@@ -48,6 +71,9 @@ class ComplianceConfig:
     compliance_apps_script_url: str = field(
         default_factory=lambda: os.getenv("COMPLIANCE_APPS_SCRIPT_URL", "")
     )
+    compliance_apps_script_token: str = field(
+        default_factory=lambda: os.getenv("COMPLIANCE_APPS_SCRIPT_TOKEN", "")
+    )
     sheets_worksheet: str = "ComplianceBriefing"
 
     # ── Slack ─────────────────────────────────────────────────
@@ -61,7 +87,12 @@ class ComplianceConfig:
 
     @property
     def db_path(self) -> Path:
-        return self.base_dir / "compliance_briefing.db"
+        filename = (
+            "compliance_briefing.dryrun.db"
+            if self.dry_run
+            else "compliance_briefing.db"
+        )
+        return self.base_dir / filename
 
     @property
     def fixtures_dir(self) -> Path:
@@ -71,6 +102,19 @@ class ComplianceConfig:
     critical_sources: tuple = ("nite", "caa", "safety_korea_mfds")
     high_sources: tuple = ("egov", "meti", "jftc", "ppc", "mhlw", "safety_korea_kats")
     medium_sources: tuple = ("brave_news", "gdelt", "ncac")
+
+    def collector_enabled(self, source_id: str) -> bool:
+        """Return whether a collector should run for this configuration."""
+        if source_id in self.collector_enabled_overrides:
+            return self.collector_enabled_overrides[source_id]
+
+        flag_names = {
+            "brave_news": "BRAVE",
+            "safety_korea_kca": "SAFETY_KOREA",
+        }
+        flag_name = flag_names.get(source_id, source_id).upper()
+        default = source_id != "gdelt"
+        return _bool(f"COMPLIANCE_SOURCE_{flag_name}_ENABLED", default)
 
     def masked_log_line(self) -> str:
         """Return a safe config summary with secrets redacted."""

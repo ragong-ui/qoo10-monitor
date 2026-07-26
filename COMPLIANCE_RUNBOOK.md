@@ -22,12 +22,35 @@ SELECT status, severity, COUNT(*) FROM alerts
 WHERE date(first_seen) = date('now') GROUP BY status, severity;
 
 -- 소스별 수집 상태
-SELECT source_id, last_success, consecutive_failures FROM source_health ORDER BY consecutive_failures DESC;
+SELECT source_id, last_status, last_success, consecutive_failures, error_msg
+FROM source_health
+ORDER BY CASE last_status
+  WHEN 'failed' THEN 1
+  WHEN 'partial' THEN 2
+  WHEN 'ok' THEN 3
+  ELSE 4
+END, consecutive_failures DESC;
 ```
+
+비활성화한 소스는 실행하지 않으므로 `source_health`가 갱신되지 않습니다.
+실행 로그의 `source_statuses`와 `disabled_sources`를 함께 확인하세요.
 
 ---
 
 ## 장애 대응
+
+### 운영 화면과 연결 상태 확인
+
+- Qoo10 SNS Google/X 검토 화면:
+  `https://qoo10-monitor-kpcsgufhoixrfo6ekyxmc7.streamlit.app/`
+- Japan Compliance Briefing 검토 화면:
+  `https://script.google.com/macros/s/AKfycbxP0EOrSkh5PQhUlpZfSL3bbheQYmR9JWjoO0uaz_u1FkVpgBIhwSGSDrypUqOWITLw/exec`
+- Compliance 읽기 API 상태 확인:
+  위 URL 뒤에 `?action=getData&limit=1`을 붙여 `{"data":[...]}` 응답을 확인합니다.
+
+Streamlit에는 `GOOGLE_APPS_SCRIPT_URL`만 사용하고, Compliance에는
+`COMPLIANCE_APPS_SCRIPT_URL`만 사용합니다. 화면이나 컬럼이 서로 뒤섞여
+보이면 가장 먼저 두 환경변수가 서로 바뀌지 않았는지 확인합니다.
 
 ### 케이스 1: 로그 파일이 0바이트 (작업이 멈춘 경우)
 
@@ -70,8 +93,9 @@ post_compliance_briefing(cfg, "test-run", [])
 **확인:** 로그에서 `[sheets] Upload failed` 확인
 **조치:**
 1. `COMPLIANCE_APPS_SCRIPT_URL` 확인
-2. Apps Script 배포 상태 확인 (Google Apps Script 콘솔)
-3. Apps Script 실행 로그 확인 (Stackdriver)
+2. `COMPLIANCE_APPS_SCRIPT_TOKEN`이 Apps Script `Secrets.gs`와 일치하는지 확인
+3. Apps Script 배포 상태 확인 (Google Apps Script 콘솔)
+4. Apps Script 실행 로그 확인 (Stackdriver)
 
 ### 케이스 5: LLM API 오류
 
@@ -128,9 +152,10 @@ WHERE datetime(first_seen) >= datetime('now', '-24 hours')
 GROUP BY source_id;
 
 -- 연속 실패 소스 (3회 이상)
-SELECT source_id, consecutive_failures, error_msg
+SELECT source_id, last_status, consecutive_failures, error_msg
 FROM source_health
-WHERE consecutive_failures >= 3;
+WHERE last_status IN ('partial', 'failed')
+   OR consecutive_failures >= 3;
 ```
 
 ---
@@ -149,8 +174,9 @@ from compliance_briefing.collectors.brave_search import BraveSearchCollector
 import json
 cfg = ComplianceConfig()
 c = BraveSearchCollector(cfg)
-items, ok = c.collect()
-print(json.dumps(items[:2], ensure_ascii=False, indent=2))
+result = c.collect()
+print("status:", result.status, "error:", result.error_msg)
+print(json.dumps(result.items[:2], ensure_ascii=False, indent=2))
 "
 ```
 

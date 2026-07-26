@@ -4,6 +4,7 @@
 // ============================================================
 
 var SHEET_NAME = "ComplianceBriefing";
+var COMPLIANCE_SPREADSHEET_ID = "1rF_QXLRL7XXw34myMmXkw4wHSO7sCYXFSI9x_E74M5Q";
 
 var HEADERS = [
   "検出日時",         // A  detected_at
@@ -26,6 +27,13 @@ var HEADERS = [
 
 var COL = {};
 HEADERS.forEach(function(h, i) { COL[h] = i + 1; });
+
+function _isWriteAuthorized_(payload) {
+  if (typeof COMPLIANCE_API_TOKEN === "undefined" || !COMPLIANCE_API_TOKEN) {
+    return false;
+  }
+  return String((payload && payload.api_token) || "") === String(COMPLIANCE_API_TOKEN);
+}
 
 // ── doGet ─────────────────────────────────────────────────────
 /**
@@ -59,6 +67,8 @@ function doGet(e) {
  * action="batch_append"      → 行を一括追加
  * action="mark_dashboard_ready" → run_id の dashboard_ready を更新
  * action="update_status"     → ステータス / 備考を更新
+ * action="translate_batch"   → 韓国語・日本語の対訳を生成
+ * action="reset_sheet"       → バックアップ後にデータ行を消去
  */
 function doPost(e) {
   try {
@@ -73,6 +83,12 @@ function doPost(e) {
     }
     if (action === "update_status") {
       return _handleUpdateStatus(payload);
+    }
+    if (action === "translate_batch") {
+      return _handleTranslateBatch(payload);
+    }
+    if (action === "reset_sheet") {
+      return _handleResetSheet(payload);
     }
 
     return _jsonOut({ status: "error", message: "Unknown action: " + action });
@@ -98,14 +114,55 @@ function doPost(e) {
  *   }
  */
 function _handleBatchAppend(payload) {
+  if (!_isWriteAuthorized_(payload)) {
+    return _jsonOut({ status: "error", message: "Unauthorized" });
+  }
+
   var sheet = getSheetOrCreate(SHEET_NAME, HEADERS);
   var rows = payload.rows || [];
   var run_id = payload.run_id || "";
-  var appended = 0;
+  if (!run_id) {
+    return _jsonOut({ status: "error", message: "run_id is required" });
+  }
 
+  // A successful retry must not duplicate a completed run. An incomplete
+  // previous attempt is replaced because its dashboard_ready cells are blank.
+  var existingRows = [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    var existingData = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+    for (var e = 0; e < existingData.length; e++) {
+      if (String(existingData[e][COL["Run ID"] - 1]) === run_id) {
+        existingRows.push({
+          rowIndex: e + 2,
+          ready: String(existingData[e][COL["dashboard_ready"] - 1]) === "1",
+        });
+      }
+    }
+  }
+
+  var alreadyReady = existingRows.length === rows.length && existingRows.length > 0;
+  for (var r = 0; r < existingRows.length; r++) {
+    alreadyReady = alreadyReady && existingRows[r].ready;
+  }
+  if (alreadyReady) {
+    return _jsonOut({
+      status: "ok",
+      rows: existingRows.length,
+      run_id: run_id,
+      dashboard_ready: true,
+      reused: true,
+    });
+  }
+
+  for (var d = existingRows.length - 1; d >= 0; d--) {
+    sheet.deleteRow(existingRows[d].rowIndex);
+  }
+
+  var values = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    var rowArr = [
+    values.push([
       r.detected_at   || new Date().toISOString(),
       r.run_id        || run_id,
       r.category      || "",
@@ -121,23 +178,28 @@ function _handleBatchAppend(payload) {
       r.marketplace   || "",
       r.status        || "new",
       r.notes         || "",
-      "",  // dashboard_ready — 初期値は空
-    ];
-
-    sheet.appendRow(rowArr);
-
-    // 重要度によって行の背景色を設定
-    var lastRow = sheet.getLastRow();
-    var sev = (r.severity || "").toLowerCase();
-    var bg = _severityBg(sev);
-    if (bg) {
-      sheet.getRange(lastRow, 1, 1, HEADERS.length).setBackground(bg);
-    }
-
-    appended++;
+      "1",
+    ]);
   }
 
-  return _jsonOut({ status: "ok", rows: appended, run_id: run_id });
+  if (values.length > 0) {
+    var startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, values.length, HEADERS.length).setValues(values);
+    for (var s = 0; s < rows.length; s++) {
+      var sev = (rows[s].severity || "").toLowerCase();
+      var bg = _severityBg(sev);
+      if (bg) {
+        sheet.getRange(startRow + s, 1, 1, HEADERS.length).setBackground(bg);
+      }
+    }
+  }
+
+  return _jsonOut({
+    status: "ok",
+    rows: values.length,
+    run_id: run_id,
+    dashboard_ready: true,
+  });
 }
 
 // ── action: mark_dashboard_ready ──────────────────────────────
@@ -147,6 +209,10 @@ function _handleBatchAppend(payload) {
  * payload: { action: "mark_dashboard_ready", run_id: "abc123" }
  */
 function _handleMarkDashboardReady(payload) {
+  if (!_isWriteAuthorized_(payload)) {
+    return _jsonOut({ status: "error", message: "Unauthorized" });
+  }
+
   var run_id = payload.run_id || "";
   if (!run_id) {
     return _jsonOut({ status: "error", message: "run_id is required" });
@@ -184,15 +250,19 @@ function _handleMarkDashboardReady(payload) {
  * payload: { action: "update_status", row_index: 5, status: "Actioned", notes: "対応済み" }
  * row_index は 1-based (ヘッダー = 1、最初のデータ行 = 2)
  */
-function _handleUpdateStatus(payload) {
+function _updateStatus_(payload) {
+  if (!_isWriteAuthorized_(payload)) {
+    return { status: "error", message: "Unauthorized" };
+  }
+
   var sheet = _getSheet(SHEET_NAME);
   if (!sheet) {
-    return _jsonOut({ status: "error", message: "Sheet not found: " + SHEET_NAME });
+    return { status: "error", message: "Sheet not found: " + SHEET_NAME };
   }
 
   var rowIndex = Number(payload.row_index);
   if (!rowIndex || rowIndex < 2) {
-    return _jsonOut({ status: "error", message: "Invalid row_index: " + payload.row_index });
+    return { status: "error", message: "Invalid row_index: " + payload.row_index };
   }
 
   if (payload.status !== undefined) {
@@ -202,7 +272,109 @@ function _handleUpdateStatus(payload) {
     sheet.getRange(rowIndex, COL["備考"]).setValue(payload.notes);
   }
 
-  return _jsonOut({ status: "ok" });
+  return { status: "ok" };
+}
+
+function _handleUpdateStatus(payload) {
+  return _jsonOut(_updateStatus_(payload));
+}
+
+function updateStatus(payload) {
+  return _updateStatus_(payload);
+}
+
+// ── action: translate_batch ───────────────────────────────────
+
+function _detectSourceLanguage_(text) {
+  text = String(text || "");
+  var hangul = (text.match(/[\uac00-\ud7a3]/g) || []).length;
+  var japanese = (
+    text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/g) || []
+  ).length;
+  if (hangul > japanese) return "ko";
+  if (japanese > 0) return "ja";
+  return "";
+}
+
+function _translateText_(text, sourceLanguage, targetLanguage) {
+  text = String(text || "").trim();
+  if (!text || sourceLanguage === targetLanguage) return text;
+  return LanguageApp.translate(text, sourceLanguage, targetLanguage);
+}
+
+function _handleTranslateBatch(payload) {
+  if (!_isWriteAuthorized_(payload)) {
+    return _jsonOut({ status: "error", message: "Unauthorized" });
+  }
+
+  var rows = payload.rows || [];
+  if (!Array.isArray(rows) || rows.length > 25) {
+    return _jsonOut({
+      status: "error",
+      message: "rows must be an array with at most 25 items",
+    });
+  }
+
+  var translated = [];
+  for (var i = 0; i < rows.length; i++) {
+    var title = String(rows[i].title || "").trim();
+    var summary = String(rows[i].body || "").trim() || title;
+    var sourceLanguage = _detectSourceLanguage_(title + " " + summary);
+    var titleKo = _translateText_(title, sourceLanguage, "ko").substring(0, 80);
+    var titleJa = _translateText_(title, sourceLanguage, "ja").substring(0, 80);
+
+    var summaryKo;
+    var summaryJa;
+    if (summary === title) {
+      summaryKo = titleKo;
+      summaryJa = titleJa;
+    } else {
+      summaryKo = _translateText_(summary, sourceLanguage, "ko").substring(0, 300);
+      summaryJa = _translateText_(summary, sourceLanguage, "ja").substring(0, 300);
+    }
+
+    translated.push({
+      title_ko: titleKo,
+      title_ja: titleJa,
+      summary_ko: summaryKo,
+      summary_ja: summaryJa,
+    });
+  }
+
+  return _jsonOut({ status: "ok", rows: translated });
+}
+
+// ── action: reset_sheet ───────────────────────────────────────
+
+function _handleResetSheet(payload) {
+  if (!_isWriteAuthorized_(payload)) {
+    return _jsonOut({ status: "error", message: "Unauthorized" });
+  }
+
+  var ss = _getSpreadsheet();
+  var sheet = getSheetOrCreate(SHEET_NAME, HEADERS);
+  var backupName = "";
+
+  if (payload.create_backup !== false && sheet.getLastRow() >= 2) {
+    backupName = "ComplianceBriefing_Backup_" + Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd_HHmmss"
+    );
+    var backup = sheet.copyTo(ss).setName(backupName);
+    backup.hideSheet();
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    sheet.getRange(2, 1, lastRow - 1, HEADERS.length).clearContent();
+  }
+
+  return _jsonOut({
+    status: "ok",
+    cleared_rows: Math.max(lastRow - 1, 0),
+    backup_sheet: backupName,
+  });
 }
 
 // ── action: getData (GET) ─────────────────────────────────────
@@ -214,13 +386,15 @@ function _handleUpdateStatus(payload) {
  *   status    = new | Reviewing | Actioned | Closed
  *   category  = recall | regulation | safety | competitor
  *   country   = JP | KR | MULTI
+ *   run_id    = 実行 ID
  *   limit     = 数値 (デフォルト 200)
  *   q         = テキスト検索 (タイトル KO / JA)
  */
-function _handleGetData(params) {
+function getData(params) {
+  params = params || {};
   var sheet = _getSheet(SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) {
-    return _jsonOut({ data: [] });
+    return { data: [] };
   }
 
   var lastRow = sheet.getLastRow();
@@ -242,6 +416,7 @@ function _handleGetData(params) {
     if (params.status   && obj["ステータス"] !== params.status) continue;
     if (params.category && obj["カテゴリ"].toLowerCase() !== params.category.toLowerCase()) continue;
     if (params.country  && obj["国"] !== params.country) continue;
+    if (params.run_id   && obj["Run ID"] !== params.run_id) continue;
     if (params.q) {
       var q = params.q.toLowerCase();
       var hay = (obj["タイトル(KO)"] + " " + obj["タイトル(JA)"]).toLowerCase();
@@ -252,7 +427,11 @@ function _handleGetData(params) {
     if (result.length >= limit) break;
   }
 
-  return _jsonOut({ data: result });
+  return { data: result };
+}
+
+function _handleGetData(params) {
+  return _jsonOut(getData(params));
 }
 
 // ── シートヘルパー ─────────────────────────────────────────────
@@ -261,7 +440,7 @@ function _handleGetData(params) {
  * ComplianceBriefing シートを取得、なければ作成してヘッダーを設定する。
  */
 function getSheetOrCreate(name, headers) {
-  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var ss    = _getSpreadsheet();
   var sheet = ss.getSheetByName(name);
 
   if (!sheet) {
@@ -281,7 +460,12 @@ function getSheetOrCreate(name, headers) {
 }
 
 function _getSheet(name) {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  return _getSpreadsheet().getSheetByName(name);
+}
+
+
+function _getSpreadsheet() {
+  return SpreadsheetApp.openById(COMPLIANCE_SPREADSHEET_ID);
 }
 
 // ── スタイル設定 ───────────────────────────────────────────────

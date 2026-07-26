@@ -26,33 +26,37 @@ SHEET_HEADERS = [
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
-def _alert_to_row(alert: dict) -> list:
-    return [
-        alert.get("first_seen", ""),
-        alert.get("run_id", ""),
-        alert.get("category", ""),
-        alert.get("country", ""),
-        alert.get("severity", ""),
-        alert.get("confidence", ""),
-        alert.get("title_ko", ""),
-        alert.get("title_ja", ""),
-        alert.get("summary_ko", "")[:500],
-        alert.get("summary_ja", "")[:500],
-        alert.get("source_url", ""),
-        alert.get("brand", "") or "",
-        alert.get("marketplace", "") or "",
-        alert.get("status", "new"),
-        "",  # 備考 — blank initially
-    ]
+def _alert_to_payload(alert: dict) -> dict:
+    """Map a DB alert to the object contract expected by Code.gs."""
+    return {
+        "detected_at": alert.get("first_seen", ""),
+        "run_id": alert.get("run_id", ""),
+        "category": alert.get("category", ""),
+        "country": alert.get("country", ""),
+        "severity": alert.get("severity", ""),
+        "confidence": alert.get("confidence", ""),
+        "title_ko": alert.get("title_ko", ""),
+        "title_ja": alert.get("title_ja", ""),
+        "summary_ko": alert.get("summary_ko", "")[:500],
+        "summary_ja": alert.get("summary_ja", "")[:500],
+        "source_url": alert.get("source_url", ""),
+        "brand": alert.get("brand", "") or "",
+        "marketplace": alert.get("marketplace", "") or "",
+        "status": alert.get("status", "new"),
+        "notes": "",
+    }
 
 
-def _validate_rows(rows: list[list]) -> bool:
+def _validate_rows(rows: list[dict]) -> bool:
     """Basic sanity check before upload."""
-    if not rows:
-        return True
+    expected = {
+        "detected_at", "run_id", "category", "country", "severity", "confidence",
+        "title_ko", "title_ja", "summary_ko", "summary_ja", "source_url",
+        "brand", "marketplace", "status", "notes",
+    }
     for row in rows:
-        if len(row) != len(SHEET_HEADERS):
-            log.error("[sheets] Row has %d columns, expected %d", len(row), len(SHEET_HEADERS))
+        if set(row) != expected:
+            log.error("[sheets] Row payload does not match Apps Script contract")
             return False
     return True
 
@@ -74,6 +78,10 @@ def upload_run_snapshot(
         log.warning("[sheets] COMPLIANCE_APPS_SCRIPT_URL not set — cannot upload")
         return False
 
+    if not cfg.compliance_apps_script_token:
+        log.warning("[sheets] COMPLIANCE_APPS_SCRIPT_TOKEN not set — cannot upload securely")
+        return False
+
     alerts = db.get_alerts_for_run(run_id)
     if not alerts:
         log.info("[sheets] No alerts for run %s — nothing to upload", run_id)
@@ -82,7 +90,7 @@ def upload_run_snapshot(
     # Sort by severity then first_seen
     alerts.sort(key=lambda a: (_SEV_ORDER.get(a.get("severity", "low"), 3), a.get("first_seen", "")))
 
-    rows = [_alert_to_row(a) for a in alerts]
+    rows = [_alert_to_payload(a) for a in alerts]
 
     if not _validate_rows(rows):
         return False
@@ -93,19 +101,60 @@ def upload_run_snapshot(
         "headers": SHEET_HEADERS,
         "rows": rows,
         "run_id": run_id,
+        "api_token": cfg.compliance_apps_script_token,
     }
 
     try:
-        resp = requests.post(cfg.compliance_apps_script_url, json=payload, timeout=60)
-        resp.raise_for_status()
-        result = resp.json()
-        if result.get("status") == "ok":
-            log.info("[sheets] Uploaded %d rows for run %s", result.get("rows", len(rows)), run_id)
-            db.mark_dashboard_ready(run_id)
-            return True
-        else:
+        append_resp = requests.post(
+            cfg.compliance_apps_script_url,
+            json=payload,
+            timeout=60,
+        )
+        append_resp.raise_for_status()
+        result = append_resp.json()
+        if result.get("status") != "ok":
             log.error("[sheets] Apps Script returned error: %s", result)
             return False
+        if int(result.get("rows", -1)) != len(rows):
+            log.error(
+                "[sheets] Apps Script appended %s rows, expected %d",
+                result.get("rows"),
+                len(rows),
+            )
+            return False
+
+        # New deployments mark all rows ready atomically in batch_append.
+        # Keep the explicit action as a compatibility path for older deployments.
+        if result.get("dashboard_ready") is True:
+            log.info("[sheets] Uploaded %d rows for run %s", len(rows), run_id)
+            db.mark_dashboard_ready(run_id)
+            return True
+
+        ready_resp = requests.post(
+            cfg.compliance_apps_script_url,
+            json={
+                "action": "mark_dashboard_ready",
+                "run_id": run_id,
+                "api_token": cfg.compliance_apps_script_token,
+            },
+            timeout=60,
+        )
+        ready_resp.raise_for_status()
+        ready_result = ready_resp.json()
+        if ready_result.get("status") != "ok":
+            log.error("[sheets] Dashboard-ready update failed: %s", ready_result)
+            return False
+        if int(ready_result.get("updated", 0)) < len(rows):
+            log.error(
+                "[sheets] Dashboard-ready updated %s rows, expected at least %d",
+                ready_result.get("updated"),
+                len(rows),
+            )
+            return False
+
+        log.info("[sheets] Uploaded %d rows for run %s", len(rows), run_id)
+        db.mark_dashboard_ready(run_id)
+        return True
     except Exception as e:
         log.error("[sheets] Upload failed: %s", e)
         return False

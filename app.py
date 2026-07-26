@@ -1,6 +1,8 @@
 """
-Qoo10 SNS モニタリング — Web 대시보드
-Streamlit Cloud 배포용 / 외부 벤더 공유 가능
+Qoo10 SNS モニタリング — Google/X 전용 Web 대시보드
+Streamlit Cloud 배포용 / 외부 벤더 공유 가능.
+Japan Compliance Briefing은 이 앱에 통합하지 않고 별도 Apps Script
+대시보드에서 운영한다.
 """
 
 import os
