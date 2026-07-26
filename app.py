@@ -34,7 +34,6 @@ COL_GOOGLE = {
     "검색확인 / 検索確認": "검색확인",   # G
     "오탐지여부":           "오탐지여부", # H
     "Status":               "Status",     # I
-    "아카이브 / Archive":   "아카이브",
 }
 COL_X = {
     "검색일 / 検索日":        "검색일",
@@ -46,7 +45,6 @@ COL_X = {
     "검색확인 / 検索確認":   "검색확인",   # G
     "오탐지여부":             "오탐지여부", # H
     "Status":                 "Status",     # I
-    "아카이브 / Archive":     "아카이브",
 }
 
 
@@ -94,6 +92,18 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
         return
 
     df = df_raw.rename(columns=col_map)
+    required_cols = [
+        "_row_index", "검색일", kw_col, "URL", "개요", "Qoo10 상품",
+        "위험도", "검색확인", "오탐지여부", "Status",
+    ]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        st.error(
+            "Google Sheets 컬럼 구성이 대시보드와 일치하지 않습니다: "
+            + ", ".join(missing_cols)
+        )
+        return
+
 
     # ── 필터 ────────────────────────────────────────────────
     f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
@@ -148,7 +158,7 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
     # ── 에디터 준비 ──────────────────────────────────────────
     row_indices = filtered["_row_index"].tolist()
     display_cols = ["검색일", kw_col, "URL", "개요", "Qoo10 상품",
-                    "위험도", "검색확인", "오탐지여부", "Status", "아카이브"]
+                    "위험도", "검색확인", "오탐지여부", "Status"]
 
     editor_df = filtered[display_cols].copy()
     editor_df.insert(0, "선택", False)   # 체크박스 열
@@ -183,7 +193,7 @@ def render_tab(sheet_name: str, col_map: dict, kw_col: str):
             ),
         },
         disabled=["검색일", kw_col, "URL", "개요", "Qoo10 상품",
-                  "위험도", "검색확인", "아카이브"],
+                  "위험도", "검색확인"],
         hide_index=True,
         use_container_width=True,
         key=f"editor_{sheet_name}",
