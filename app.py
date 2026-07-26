@@ -24,6 +24,7 @@ from sns_enrichment import (
     extract_detection_evidence,
     extract_product_number,
 )
+from reviewers import REVIEWER_OPTIONS, reviewer_dropdown_options
 from tls_utils import enable_system_trust_store
 
 enable_system_trust_store()
@@ -366,10 +367,11 @@ def render_source_tab(
         st.info("필터 조건에 해당하는 데이터가 없습니다.")
         return
 
-    reviewer_default = st.text_input(
+    reviewer_default = st.selectbox(
         "현재 담당자",
-        placeholder="변경 이력에 기록할 이름을 입력하세요.",
+        options=["", *REVIEWER_OPTIONS],
         key=f"reviewer_{sheet_name}",
+        help="변경 이력에 기록할 담당자를 선택하세요.",
     )
     display_columns = [
         "검색일", kw_col, "URL", "개요", "Qoo10 상품", "상품번호", "Case ID",
@@ -403,7 +405,11 @@ def render_source_tab(
             "Status": st.column_config.SelectboxColumn(
                 "Status", options=STATUS_OPTIONS, width="medium"
             ),
-            "담당자": st.column_config.TextColumn("담당자", width="medium"),
+            "담당자": st.column_config.SelectboxColumn(
+                "담당자",
+                options=reviewer_dropdown_options(filtered["담당자"]),
+                width="medium",
+            ),
             "조치 메모": st.column_config.TextColumn("조치 메모", width="large"),
         },
         disabled=[
@@ -655,10 +661,11 @@ def render_case_tab() -> None:
             "페이지", min_value=1, max_value=total_pages, value=1, step=1
         )
     with p3:
-        reviewer_default = st.text_input(
+        reviewer_default = st.selectbox(
             "현재 담당자",
-            placeholder="Case 변경 이력에 기록할 이름",
+            options=["", *REVIEWER_OPTIONS],
             key="case_reviewer",
+            help="Case 변경 이력에 기록할 담당자를 선택하세요.",
         )
 
     start = (int(page_number) - 1) * page_size
@@ -680,7 +687,11 @@ def render_case_tab() -> None:
             "Status": st.column_config.SelectboxColumn(
                 "Status", options=[*STATUS_OPTIONS, "Mixed"], width="medium"
             ),
-            "담당자": st.column_config.TextColumn("담당자", width="medium"),
+            "담당자": st.column_config.SelectboxColumn(
+                "담당자",
+                options=reviewer_dropdown_options(page["담당자"]),
+                width="medium",
+            ),
             "조치 메모": st.column_config.TextColumn("조치 메모", width="large"),
         },
         disabled=[
@@ -780,7 +791,12 @@ def render_history_tab() -> None:
     })
     h1, h2, h3 = st.columns([1.5, 1.5, 2])
     with h1:
-        reviewer = st.text_input("담당자", key="history_reviewer")
+        history_reviewers = reviewer_dropdown_options(
+            history.get("담당자", pd.Series(dtype=str))
+        )
+        reviewer = st.selectbox(
+            "담당자", ["전체", *[name for name in history_reviewers if name]], key="history_reviewer"
+        )
     with h2:
         field = st.selectbox(
             "변경항목",
@@ -792,7 +808,7 @@ def render_history_tab() -> None:
             "이력 검색", placeholder="상품번호 / Case ID / 메모 검색...", key="history_text"
         )
     mask = pd.Series(True, index=history.index)
-    if reviewer and "담당자" in history:
+    if reviewer != "전체" and "담당자" in history:
         mask &= history["담당자"].astype(str).str.contains(
             re.escape(reviewer), case=False, na=False
         )

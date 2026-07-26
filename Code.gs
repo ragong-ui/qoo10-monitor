@@ -42,6 +42,11 @@ const FRAUD_WORDS = [
   "販売禁止商品", "規約違反", "強制返金", "中国",
 ];
 
+const REVIEWERS = [
+  "Rani Gong", "Jihyun Kwon", "Minjong Jang", "Donghee Kim", "Whajoon Ryu",
+  "Woongsoo Shin", "Kim Meekyoung", "Kim Jinsun", "Choi Yunju", "Hyejin Jegal",
+];
+
 
 // ── GET ──────────────────────────────────────────────────────
 function doGet(e) {
@@ -485,6 +490,12 @@ function applyDropdowns(sheet, headers) {
     .setAllowInvalid(false)
     .build();
   sheet.getRange(2, columns["Status"], 4999, 1).setDataValidation(statusRule);
+
+  const reviewerRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(REVIEWERS, true)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, columns["담당자 / 担当者"], 4999, 1).setDataValidation(reviewerRule);
 }
 
 

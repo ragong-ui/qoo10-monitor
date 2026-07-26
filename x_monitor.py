@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+from reviewers import excel_validation_formula
 from sns_enrichment import enrich_rows
 from tls_utils import enable_system_trust_store
 
@@ -361,6 +362,11 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
     dv_status = DataValidation(type="list", formula1='"New,Reviewing,Actioned,Closed"', allow_blank=False)
     ws.add_data_validation(dv_status)
     dv_status.add("I2:I10000")
+
+    # Q열 담당자 드롭다운
+    dv_reviewer = DataValidation(type="list", formula1=excel_validation_formula(), allow_blank=True)
+    ws.add_data_validation(dv_reviewer)
+    dv_reviewer.add("Q2:Q10000")
 
     ws.freeze_panes = "A2"
 
