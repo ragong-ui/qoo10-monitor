@@ -7,6 +7,9 @@ HTTP POST 한 번으로 Apps Script가 Sheets에 직접 기록
 import os
 import requests
 from dotenv import load_dotenv
+from tls_utils import enable_system_trust_store
+
+enable_system_trust_store()
 
 load_dotenv()
 
@@ -14,11 +17,21 @@ APPS_SCRIPT_URL = os.getenv("GOOGLE_APPS_SCRIPT_URL", "")
 
 HEADERS_GOOGLE = [
     "검색일 / 検索日", "검색 키워드", "URL", "개요 / 概要",
-    "Qoo10 상품 / 商品P", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status",
+    "Qoo10 상품 / 商品P", "위험도 / 危険度", "검색확인 / 検索確認",
+    "오탐지여부", "Status", "상품번호 / 商品番号", "Case ID",
+    "탐지 근거 / 検知根拠", "AI 판정 / AI判定", "AI 신뢰도 / AI信頼度",
+    "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
+    "담당자 / 担当者", "조치 메모 / 対応メモ",
+    "최종 변경일 / 最終更新", "AI 모델 / AI Model",
 ]
 HEADERS_X = [
     "검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容",
-    "Qoo10 상품 URL", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status",
+    "Qoo10 상품 URL", "위험도 / 危険度", "검색확인 / 検索確認",
+    "오탐지여부", "Status", "상품번호 / 商品番号", "Case ID",
+    "탐지 근거 / 検知根拠", "AI 판정 / AI判定", "AI 신뢰도 / AI信頼度",
+    "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
+    "담당자 / 担当者", "조치 메모 / 対応メモ",
+    "최종 변경일 / 最終更新", "AI 모델 / AI Model",
 ]
 
 
@@ -60,6 +73,11 @@ def write_to_sheets(rows: list, kr_list: list, sheet_type: str = "google"):
             row["date"], kw_or_q, row["url"],
             summary, row["qoo10_link"], row["likelihood"],
             search_f, "", "New",
+            row.get("product_number", ""), row.get("case_id", ""),
+            row.get("detection_evidence", ""), row.get("ai_label", "PENDING"),
+            row.get("ai_confidence", ""), row.get("ai_reason", ""),
+            row.get("ai_evidence", ""), "", "", "",
+            row.get("ai_model", ""),
         ])
 
     payload = {

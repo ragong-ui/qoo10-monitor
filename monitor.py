@@ -20,6 +20,10 @@ from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
+from sns_enrichment import enrich_rows
+from tls_utils import enable_system_trust_store
+
+enable_system_trust_store()
 
 # Windows CP949 환경에서 UTF-8 출력 강제
 # write_through=True: 파일 redirect 시 TextIOWrapper 버퍼를 거치지 않고 즉시 기록
@@ -355,7 +359,15 @@ def save_excel(rows: list[dict]) -> Path:
     ws = wb.active
     ws.title = "위조품 레포트"
 
-    headers = ["검색일 / 検索日", "검색 키워드", "URL", "개요 / 概要", "Qoo10 상품 / 商品P", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status"]
+    headers = [
+        "검색일 / 検索日", "검색 키워드", "URL", "개요 / 概要",
+        "Qoo10 상품 / 商品P", "위험도 / 危険度", "검색확인 / 検索確認",
+        "오탐지여부", "Status", "상품번호 / 商品番号", "Case ID",
+        "탐지 근거 / 検知根拠", "AI 판정 / AI判定", "AI 신뢰도 / AI信頼度",
+        "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
+        "담당자 / 担当者", "조치 메모 / 対応メモ",
+        "최종 변경일 / 最終更新", "AI 모델 / AI Model",
+    ]
     ws.append(headers)
 
     header_fill = PatternFill("solid", fgColor="2F5496")
@@ -376,6 +388,11 @@ def save_excel(rows: list[dict]) -> Path:
             _bilingual(row["summary"], kr),
             row["qoo10_link"], row["likelihood"],
             "", "", "New",   # G=검색확인(placeholder), H=오탐지여부, I=Status
+            row.get("product_number", ""), row.get("case_id", ""),
+            row.get("detection_evidence", ""), row.get("ai_label", "PENDING"),
+            row.get("ai_confidence", ""), row.get("ai_reason", ""),
+            row.get("ai_evidence", ""), "", "", "",
+            row.get("ai_model", ""),
         ])
         fill = high_fill if row["likelihood"] == "HIGH" else med_fill
         for cell in ws[ws.max_row]:
@@ -387,7 +404,10 @@ def save_excel(rows: list[dict]) -> Path:
             g_cell.hyperlink = row["search_url"]
             g_cell.font = Font(bold=False, color="0563C1", underline="single")
             g_cell.fill = fill
-    for col, width in zip("ABCDEFGHI", [12, 22, 55, 70, 50, 10, 12, 12, 14]):
+    for col, width in zip(
+        "ABCDEFGHIJKLMNOPQRST",
+        [12, 22, 55, 70, 50, 10, 12, 12, 14, 16, 24, 60, 22, 14, 45, 60, 18, 35, 20, 24],
+    ):
         ws.column_dimensions[col].width = width
 
     # H열 헤더에 입력 안내 메모 추가
@@ -561,6 +581,7 @@ def main():
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] Qoo10 偽物モニタリング 開始")
 
     rows = run_searches()
+    enrich_rows(rows, _FRAUD_WORDS, source="google")
     high = sum(1 for r in rows if r["likelihood"] == "HIGH")
     med  = sum(1 for r in rows if r["likelihood"] == "MEDIUM")
     summary = (

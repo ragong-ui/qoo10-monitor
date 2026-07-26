@@ -3,6 +3,7 @@
 !.env.example
 credentials.json
 google_token.json
+.clasp.json
 apps-script/compliance/Secrets.gs
 .streamlit/secrets.toml
 __pycache__/

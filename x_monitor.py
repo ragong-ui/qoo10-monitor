@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sns_enrichment import enrich_rows
+from tls_utils import enable_system_trust_store
+
+enable_system_trust_store()
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
@@ -293,7 +297,16 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
     ws = wb.active
     ws.title = "X게시물 레포트"
 
-    headers = ["검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容", "Qoo10 상품 URL", "위험도 / 危険度", "검색확인 / 検索確認", "오탐지여부", "Status"]
+    headers = [
+        "검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL",
+        "게시물 내용 / 投稿内容", "Qoo10 상품 URL", "위험도 / 危険度",
+        "검색확인 / 検索確認", "오탐지여부", "Status",
+        "상품번호 / 商品番号", "Case ID", "탐지 근거 / 検知根拠",
+        "AI 판정 / AI判定", "AI 신뢰도 / AI信頼度",
+        "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
+        "담당자 / 担当者", "조치 메모 / 対応メモ",
+        "최종 변경일 / 最終更新", "AI 모델 / AI Model",
+    ]
     ws.append(headers)
 
     hdr_fill  = PatternFill("solid", fgColor="2F5496")
@@ -313,6 +326,11 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
             r["date"], r["query"], r["url"],
             _bilingual(r["summary"], kr), r["qoo10_link"], r["likelihood"],
             "", "", "New",   # G=검색확인(placeholder), H=오탐지여부, I=Status
+            r.get("product_number", ""), r.get("case_id", ""),
+            r.get("detection_evidence", ""), r.get("ai_label", "PENDING"),
+            r.get("ai_confidence", ""), r.get("ai_reason", ""),
+            r.get("ai_evidence", ""), "", "", "",
+            r.get("ai_model", ""),
         ])
         fill = high_fill if r["likelihood"] == "HIGH" else med_fill
         for c in ws[ws.max_row]:
@@ -325,7 +343,10 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
             g_cell.hyperlink = r["search_url"]
             g_cell.font = Font(bold=False, color="0563C1", underline="single")
             g_cell.fill = fill
-    for col, w in zip("ABCDEFGHI", [12, 20, 55, 80, 50, 10, 12, 12, 14]):
+    for col, w in zip(
+        "ABCDEFGHIJKLMNOPQRST",
+        [12, 20, 55, 80, 50, 10, 12, 12, 14, 16, 24, 60, 22, 14, 45, 60, 18, 35, 20, 24],
+    ):
         ws.column_dimensions[col].width = w
 
     from openpyxl.comments import Comment
@@ -456,6 +477,7 @@ def main():
     print(f"  方式: Yahoo! リアルタイム検索 API / クエリ数: {len(X_QUERIES)} / 直近2日")
 
     rows = run_x_searches()
+    enrich_rows(rows, _FRAUD_WORDS, source="x")
 
     high    = sum(1 for r in rows if r["likelihood"] == "HIGH")
     med     = sum(1 for r in rows if r["likelihood"] == "MEDIUM")
