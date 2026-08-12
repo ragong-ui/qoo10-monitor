@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import requests
 
-from apps_script_client import AppsScriptRequestError, post_json_with_retry
+from apps_script_client import AppsScriptRequestError, get_json_with_retry, post_json_with_retry
 
 
 class FakeResponse:
@@ -142,6 +142,60 @@ def test_final_error_does_not_expose_temporary_response_url():
         message = str(exc)
         assert "2회 재시도" in message
         assert "sensitive-token" not in message
+        assert "user_content_key" not in message
+    else:
+        raise AssertionError("AppsScriptRequestError was not raised")
+
+def test_get_retries_original_exec_and_preserves_sheet_parameter():
+    responses = [
+        FakeResponse(
+            status_code=404,
+            url="https://script.googleusercontent.com/macros/echo?user_content_key=expired",
+        ),
+        FakeResponse(body={"data": [{"Status": "New"}]}),
+    ]
+    calls = []
+    sleeps = []
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        return responses.pop(0)
+
+    result = get_json_with_retry(
+        "https://script.google.com/macros/s/test/exec",
+        {"sheet": "Google モニタリング"},
+        get_func=get,
+        sleep_func=sleeps.append,
+    )
+
+    assert result == {"data": [{"Status": "New"}]}
+    assert len(calls) == 2
+    assert all(call[0] == "https://script.google.com/macros/s/test/exec" for call in calls)
+    assert all(call[1]["sheet"] == "Google モニタリング" for call in calls)
+    assert calls[0][1]["_client_attempt"] == 1
+    assert calls[1][1]["_client_attempt"] == 2
+    assert sleeps == [1]
+
+
+def test_get_final_error_hides_temporary_url():
+    def get(_url, **_kwargs):
+        return FakeResponse(
+            status_code=404,
+            url="https://script.googleusercontent.com/macros/echo?user_content_key=hidden-token",
+        )
+
+    try:
+        get_json_with_retry(
+            "https://script.google.com/macros/s/test/exec",
+            {"sheet": "Google モニタリング"},
+            max_attempts=2,
+            get_func=get,
+            sleep_func=lambda _seconds: None,
+        )
+    except AppsScriptRequestError as exc:
+        message = str(exc)
+        assert "2회 재시도" in message
+        assert "hidden-token" not in message
         assert "user_content_key" not in message
     else:
         raise AssertionError("AppsScriptRequestError was not raised")

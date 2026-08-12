@@ -118,3 +118,78 @@ def post_json_with_retry(
         "Google의 Apps Script 응답 전달이 일시적으로 실패했습니다. "
         f"{max_attempts}회 재시도 후 중단했습니다: {last_reason}"
     )
+
+
+def get_json_with_retry(
+    url: str,
+    params: dict[str, Any],
+    *,
+    timeout: int = 45,
+    max_attempts: int = 5,
+    sleep_func: Callable[[float], None] = time.sleep,
+    get_func: Callable[..., requests.Response] = requests.get,
+) -> dict[str, Any]:
+    """Apps Script 조회 응답의 임시 리디렉션 404를 원본 `/exec`부터 재시도한다."""
+    if not url:
+        raise AppsScriptRequestError("Apps Script URL이 설정되지 않았습니다.")
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    last_reason = "unknown error"
+    for attempt in range(1, max_attempts + 1):
+        response: requests.Response | None = None
+        request_params = {
+            **params,
+            "_client_attempt": attempt,
+            "_ts": time.time_ns(),
+        }
+        try:
+            response = get_func(
+                url,
+                params=request_params,
+                headers={
+                    "Accept": "application/json",
+                    "Cache-Control": "no-cache, no-store",
+                    "Pragma": "no-cache",
+                },
+                timeout=timeout,
+            )
+            if _is_retryable_http(response):
+                last_reason = f"HTTP {response.status_code} ({_response_host(response)})"
+                if attempt < max_attempts:
+                    sleep_func(2 ** (attempt - 1))
+                    continue
+
+            response.raise_for_status()
+            try:
+                body = response.json()
+            except ValueError as exc:
+                last_reason = "invalid JSON response"
+                if attempt < max_attempts:
+                    sleep_func(2 ** (attempt - 1))
+                    continue
+                raise AppsScriptRequestError(
+                    f"Apps Script 조회 응답을 해석하지 못했습니다. ({max_attempts}회 시도)"
+                ) from exc
+
+            if not isinstance(body, dict):
+                raise AppsScriptRequestError("Apps Script 조회 응답 형식이 올바르지 않습니다.")
+            return body
+        except AppsScriptRequestError:
+            raise
+        except requests.RequestException as exc:
+            last_reason = _short_error(response, exc)
+            retryable = response is None or _is_retryable_http(response)
+            if retryable and attempt < max_attempts:
+                sleep_func(2 ** (attempt - 1))
+                continue
+            if not retryable:
+                raise AppsScriptRequestError(
+                    f"Apps Script 데이터 조회가 거부되었습니다: {last_reason}"
+                ) from exc
+            break
+
+    raise AppsScriptRequestError(
+        "Google의 Apps Script 데이터 응답 전달이 일시적으로 실패했습니다. "
+        f"{max_attempts}회 재시도 후 중단했습니다: {last_reason}"
+    )

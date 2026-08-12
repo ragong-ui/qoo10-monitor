@@ -15,11 +15,10 @@ import re
 from typing import Any
 
 import pandas as pd
-import requests
 import streamlit as st
 from dotenv import load_dotenv
 
-from apps_script_client import post_json_with_retry
+from apps_script_client import get_json_with_retry, post_json_with_retry
 from sns_enrichment import (
     build_case_id,
     extract_detection_evidence,
@@ -107,26 +106,52 @@ def _clean(value: Any, default: str = "") -> str:
     return default if text in {"nan", "None", "NaT"} else text
 
 
-@st.cache_data(ttl=60)
-def load_data(sheet_name: str) -> pd.DataFrame:
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_data(sheet_name: str) -> pd.DataFrame:
     if not APPS_SCRIPT_URL:
         return pd.DataFrame()
-    try:
-        resp = requests.get(
-            APPS_SCRIPT_URL,
-            params={"sheet": sheet_name},
-            timeout=45,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        if body.get("status") == "error":
-            raise RuntimeError(body.get("message", "Apps Script error"))
-        rows = body.get("data", [])
-        return pd.DataFrame(rows) if rows else pd.DataFrame()
-    except Exception as exc:
-        st.error(f"데이터 로드 실패 ({sheet_name}): {exc}")
-        return pd.DataFrame()
+    body = get_json_with_retry(
+        APPS_SCRIPT_URL,
+        {"sheet": sheet_name},
+        timeout=45,
+        max_attempts=5,
+    )
+    if body.get("status") == "error":
+        raise RuntimeError(body.get("message", "Apps Script error"))
+    rows = body.get("data", [])
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
+
+def _snapshot_key(sheet_name: str) -> str:
+    return f"_qoo10_remote_snapshot::{sheet_name}"
+
+
+def _data_revision() -> int:
+    return int(st.session_state.get("_qoo10_data_revision", 0))
+
+
+def invalidate_data_cache() -> None:
+    """저장 성공 또는 수동 새로고침 때만 원격 데이터 임시본을 폐기한다."""
+    for sheet_name in (SHEET_GOOGLE, SHEET_X, SHEET_HISTORY):
+        st.session_state.pop(_snapshot_key(sheet_name), None)
+    st.session_state["_qoo10_data_revision"] = _data_revision() + 1
+    st.cache_data.clear()
+
+
+def load_data(sheet_name: str) -> pd.DataFrame:
+    """편집 중에는 세션 임시본을 반환해 Google Sheets를 다시 읽지 않는다."""
+    key = _snapshot_key(sheet_name)
+    if key not in st.session_state:
+        try:
+            st.session_state[key] = _fetch_data(sheet_name)
+        except Exception as exc:
+            st.error(f"데이터 로드 실패 ({sheet_name}): {exc}")
+            return pd.DataFrame()
+    snapshot = st.session_state[key]
+    if isinstance(snapshot, pd.DataFrame):
+        return snapshot.copy()
+    st.session_state.pop(key, None)
+    return pd.DataFrame()
 
 def prepare_data(
     df_raw: pd.DataFrame,
@@ -374,6 +399,7 @@ def render_source_tab(
         key=f"reviewer_{sheet_name}",
         help="변경 이력에 기록할 담당자를 선택하세요.",
     )
+    st.caption("✏️ 편집 내용은 브라우저 임시 상태이며, ‘변경사항 저장’을 눌러야 Google Sheets에 반영됩니다.")
     display_columns = [
         "검색일", kw_col, "URL", "개요", "Qoo10 상품", "상품번호", "Case ID",
         "위험도", "탐지 근거", "AI 판정", "검색확인",
@@ -419,7 +445,7 @@ def render_source_tab(
         ],
         hide_index=True,
         use_container_width=True,
-        key=f"editor_{sheet_name}_{editor_signature}",
+        key=f"editor_{sheet_name}_{editor_signature}_{_data_revision()}",
     )
 
     changes, missing_reviewer = _build_row_changes(
@@ -439,7 +465,7 @@ def render_source_tab(
                 ok, errors = save_changes(changes)
             if ok:
                 st.success("저장 완료")
-                st.cache_data.clear()
+                invalidate_data_cache()
                 st.rerun()
             else:
                 st.error(f"일부 저장 실패: {errors[:3]}")
@@ -668,6 +694,7 @@ def render_case_tab() -> None:
             key="case_reviewer",
             help="Case 변경 이력에 기록할 담당자를 선택하세요.",
         )
+        st.caption("✏️ Case 편집 내용은 ‘Case 변경사항 저장’을 눌러야 Google Sheets에 반영됩니다.")
 
     start = (int(page_number) - 1) * page_size
     page = filtered.iloc[start:start + page_size].copy().reset_index(drop=True)
@@ -701,7 +728,7 @@ def render_case_tab() -> None:
         ],
         hide_index=True,
         use_container_width=True,
-        key=f"case_editor_{page_number}_{page_size}_{editor_signature}",
+        key=f"case_editor_{page_number}_{page_size}_{editor_signature}_{_data_revision()}",
     )
 
     changes, reviewer_missing = _case_changes(
@@ -721,7 +748,7 @@ def render_case_tab() -> None:
                 ok, errors = save_changes(changes)
             if ok:
                 st.success("Case 저장 완료")
-                st.cache_data.clear()
+                invalidate_data_cache()
                 st.rerun()
             else:
                 st.error(f"일부 저장 실패: {errors[:3]}")
@@ -865,26 +892,34 @@ def main() -> None:
         st.caption("Google/X 탐지 → 상품 Case 검토 → 조치 → 변경 이력")
     with refresh:
         if st.button("🔄 새로고침", use_container_width=True):
-            st.cache_data.clear()
+            invalidate_data_cache()
             st.rerun()
 
     if not APPS_SCRIPT_URL:
         st.error("GOOGLE_APPS_SCRIPT_URL이 설정되지 않았습니다.")
         return
 
-    tab_g, tab_x, tab_case, tab_history = st.tabs([
-        "🌐 Google モニタリング",
-        "𝕏 X モニタリング",
-        "📦 상품 Case",
-        "🕘 변경 이력",
-    ])
-    with tab_g:
+    view = st.radio(
+        "화면 선택",
+        [
+            "🌐 Google モニタリング",
+            "𝕏 X モニタリング",
+            "📦 상품 Case",
+            "🕘 변경 이력",
+        ],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_view",
+    )
+    st.caption("선택한 화면의 데이터만 불러오며, 편집 중에는 세션 임시본을 사용합니다.")
+
+    if view == "🌐 Google モニタリング":
         render_source_tab(SHEET_GOOGLE, COL_GOOGLE, "키워드", "Google")
-    with tab_x:
+    elif view == "𝕏 X モニタリング":
         render_source_tab(SHEET_X, COL_X, "쿼리", "X")
-    with tab_case:
+    elif view == "📦 상품 Case":
         render_case_tab()
-    with tab_history:
+    else:
         render_history_tab()
 
 
