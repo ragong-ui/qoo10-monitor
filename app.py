@@ -19,6 +19,7 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 
+from apps_script_client import post_json_with_retry
 from sns_enrichment import (
     build_case_id,
     extract_detection_evidence,
@@ -211,16 +212,16 @@ def save_changes(changes: list[dict[str, Any]]) -> tuple[bool, list[dict[str, An
     for start in range(0, len(changes), 400):
         chunk = changes[start:start + 400]
         try:
-            resp = requests.post(
+            body = post_json_with_retry(
                 APPS_SCRIPT_URL,
-                json={"action": "batch_update", "changes": chunk},
+                {"action": "batch_update", "changes": chunk},
                 timeout=90,
+                max_attempts=5,
             )
-            resp.raise_for_status()
-            body = resp.json()
             if body.get("status") not in {"ok", "partial"}:
                 errors.append({"message": body.get("message", "batch update failed")})
-            errors.extend(body.get("errors", []))
+            for error in body.get("errors", []):
+                errors.append({**error, "start": start})
         except Exception as exc:
             errors.append({"message": str(exc), "start": start})
     return not errors, errors
