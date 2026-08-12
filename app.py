@@ -18,7 +18,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-from apps_script_client import get_json_with_retry, post_json_with_retry
+import apps_script_client
 from sns_enrichment import (
     build_case_id,
     extract_detection_evidence,
@@ -110,7 +110,12 @@ def _clean(value: Any, default: str = "") -> str:
 def _fetch_data(sheet_name: str) -> pd.DataFrame:
     if not APPS_SCRIPT_URL:
         return pd.DataFrame()
-    body = get_json_with_retry(
+    get_json = getattr(apps_script_client, "get_json_with_retry", None)
+    if get_json is None:
+        raise RuntimeError(
+            "Streamlit 배포 파일 버전이 일치하지 않습니다. 앱을 다시 시작해 주세요."
+        )
+    body = get_json(
         APPS_SCRIPT_URL,
         {"sheet": sheet_name},
         timeout=45,
@@ -237,7 +242,7 @@ def save_changes(changes: list[dict[str, Any]]) -> tuple[bool, list[dict[str, An
     for start in range(0, len(changes), 400):
         chunk = changes[start:start + 400]
         try:
-            body = post_json_with_retry(
+            body = apps_script_client.post_json_with_retry(
                 APPS_SCRIPT_URL,
                 {"action": "batch_update", "changes": chunk},
                 timeout=90,
