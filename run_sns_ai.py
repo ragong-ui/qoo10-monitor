@@ -113,7 +113,7 @@ def main() -> int:
         return 2
     if not classifier.enabled:
         print(
-            "[ERROR] SNS AI 비활성: .env에 SNS_AI_PROVIDER와 해당 API 키를 설정하세요. "
+            "[ERROR] SNS AI 비활성: provider 인증 또는 실행 환경을 확인하세요. "
             f"provider={classifier.provider or 'disabled'}, model={classifier.model or 'unset'}"
         )
         return 2

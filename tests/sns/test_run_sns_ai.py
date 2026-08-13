@@ -30,7 +30,7 @@ def test_analyze_row_builds_safe_ai_update_payload():
                 confidence="0.91",
                 reason="구매한 상품이 가품이라는 구체적 경험",
                 evidence="Qoo10で購入した商品は偽物でした",
-                model="test-haiku",
+                model="test-sonnet",
             )
 
     row = {
@@ -49,7 +49,7 @@ def test_analyze_row_builds_safe_ai_update_payload():
     assert update["source_url"] == "https://example.com/post/1"
     assert update["ai_label"] == "PURCHASE_COUNTERFEIT"
     assert update["ai_confidence"] == "0.91"
-    assert update["ai_model"] == "test-haiku"
+    assert update["ai_model"] == "test-sonnet"
 
 
 def test_code_gs_exposes_ai_batch_update_route():

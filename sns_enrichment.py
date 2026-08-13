@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import re
 import time
 from dataclasses import dataclass
@@ -22,8 +24,30 @@ AI_LABELS = {
     "ERROR",
 }
 DEFAULT_AI_MODELS = {
-    "anthropic": "claude-haiku-4-5-20251001",
+    "claude_cli": "claude-sonnet-4-6",
+    "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o-mini",
+}
+
+AI_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "label": {
+            "type": "string",
+            "enum": [
+                "PURCHASE_COUNTERFEIT",
+                "GENERAL_WARNING",
+                "AD_OR_AFFILIATE",
+                "UNRELATED",
+                "INSUFFICIENT_CONTENT",
+            ],
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "reason": {"type": "string", "maxLength": 300},
+        "evidence": {"type": "string", "maxLength": 300},
+    },
+    "required": ["label", "confidence", "reason", "evidence"],
+    "additionalProperties": False,
 }
 
 
@@ -138,11 +162,20 @@ class SnsAiClassifier:
             0.0,
             float(os.getenv("SNS_AI_RETRY_BASE_SECONDS", "2")),
         )
+        self.cli_command = os.getenv("SNS_AI_CLAUDE_CLI", "claude").strip() or "claude"
+        self.cli_bare = os.getenv("SNS_AI_CLAUDE_BARE", "true").strip().lower() in {
+            "1", "true", "yes",
+        }
+        self.cli_api_key_helper = os.getenv(
+            "SNS_AI_CLAUDE_API_KEY_HELPER", ""
+        ).strip()
+        self.cli_workdir = os.getenv("SNS_AI_CLAUDE_WORKDIR", "").strip() or os.getcwd()
+        self.cli_path = shutil.which(self.cli_command)
         self._client: Any = None
 
     @property
     def configured(self) -> bool:
-        return self.provider in {"anthropic", "openai"} and bool(self.model)
+        return self.provider in {"claude_cli", "anthropic", "openai"} and bool(self.model)
 
     @property
     def api_key(self) -> str:
@@ -154,12 +187,16 @@ class SnsAiClassifier:
 
     @property
     def enabled(self) -> bool:
+        if self.provider == "claude_cli":
+            return self.configured and bool(self.cli_path)
         return self.configured and bool(self.api_key)
 
     def pending(self, evidence: str) -> AiResult:
         if not self.configured:
             reason = "AI 2차 분석 미설정"
-        elif not self.api_key:
+        elif self.provider == "claude_cli" and not self.cli_path:
+            reason = "Claude Code CLI 미설치"
+        elif self.provider != "claude_cli" and not self.api_key:
             reason = f"{self.provider} API 키 미설정"
         else:
             reason = "AI 분석 대기"
@@ -219,12 +256,13 @@ class SnsAiClassifier:
 
     def _call_with_retry(self, prompt: str) -> str:
         last_error: Exception | None = None
-        for attempt in range(1, self.max_attempts + 1):
+        max_attempts = 1 if self.provider == "claude_cli" else self.max_attempts
+        for attempt in range(1, max_attempts + 1):
             try:
                 return self._call(prompt)
             except Exception as exc:
                 last_error = exc
-                if attempt < self.max_attempts:
+                if attempt < max_attempts:
                     delay = self.retry_base_seconds * (2 ** (attempt - 1))
                     time.sleep(delay)
         if last_error is not None:
@@ -232,6 +270,9 @@ class SnsAiClassifier:
         raise RuntimeError("AI 분석 호출 실패")
 
     def _call(self, prompt: str) -> str:
+        if self.provider == "claude_cli":
+            return self._call_claude_cli(prompt)
+
         if self.provider == "anthropic":
             if self._client is None:
                 from anthropic import Anthropic
@@ -269,6 +310,70 @@ class SnsAiClassifier:
             return response.choices[0].message.content or ""
 
         raise RuntimeError(f"지원하지 않는 SNS_AI_PROVIDER: {self.provider}")
+
+    def _call_claude_cli(self, prompt: str) -> str:
+        if not self.cli_path:
+            raise RuntimeError("Claude Code CLI를 찾을 수 없습니다.")
+
+        command = [self.cli_path]
+        if self.cli_bare:
+            command.append("--bare")
+            if self.cli_api_key_helper:
+                command.extend([
+                    "--settings",
+                    json.dumps(
+                        {"apiKeyHelper": self.cli_api_key_helper},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ])
+        command.extend([
+            "-p",
+            "--model", self.model,
+            "--output-format", "json",
+            "--json-schema", json.dumps(AI_OUTPUT_SCHEMA, separators=(",", ":")),
+            "--tools", "",
+            "--permission-mode", "dontAsk",
+            "--no-session-persistence",
+            "--max-turns", "1",
+        ])
+
+        env = os.environ.copy()
+        env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] = "1"
+        node_options = env.get("NODE_OPTIONS", "").strip()
+        if "--use-system-ca" not in node_options.split():
+            env["NODE_OPTIONS"] = (node_options + " --use-system-ca").strip()
+
+        run_kwargs: dict[str, Any] = {
+            "args": command,
+            "input": prompt,
+            "text": True,
+            "encoding": "utf-8",
+            "capture_output": True,
+            "timeout": self.timeout,
+            "cwd": self.cli_workdir,
+            "env": env,
+            "check": False,
+        }
+        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        completed = subprocess.run(**run_kwargs)
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"Claude Code CLI 호출 실패 (exit={completed.returncode})"
+            )
+
+        envelope = json.loads(completed.stdout or "{}")
+        if envelope.get("is_error"):
+            raise RuntimeError("Claude Code CLI가 오류 응답을 반환했습니다.")
+        structured = envelope.get("structured_output")
+        if isinstance(structured, dict):
+            return json.dumps(structured, ensure_ascii=False)
+        result = envelope.get("result")
+        if isinstance(result, str) and result.strip():
+            return result
+        raise ValueError("Claude Code CLI 응답에 분석 결과가 없습니다.")
 
     @staticmethod
     def _prompt(

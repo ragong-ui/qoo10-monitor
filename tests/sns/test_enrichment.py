@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
+import sns_enrichment
 from sns_enrichment import (
     SnsAiClassifier,
     build_case_id,
@@ -97,16 +101,16 @@ def test_anthropic_without_api_key_stays_pending(monkeypatch):
         evidence="Qoo10で購入した商品は偽物でした。",
     )
 
-    assert classifier.model == "claude-haiku-4-5-20251001"
+    assert classifier.model == "claude-sonnet-4-6"
     assert classifier.enabled is False
     assert result.label == "PENDING"
     assert result.reason == "anthropic API 키 미설정"
-    assert result.model == "claude-haiku-4-5-20251001"
+    assert result.model == "claude-sonnet-4-6"
 
 
 def test_ai_classifier_retries_transient_failures(monkeypatch):
     monkeypatch.setenv("SNS_AI_PROVIDER", "anthropic")
-    monkeypatch.setenv("SNS_AI_MODEL", "test-haiku")
+    monkeypatch.setenv("SNS_AI_MODEL", "test-sonnet")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("SNS_AI_MAX_ATTEMPTS", "3")
     monkeypatch.setenv("SNS_AI_RETRY_BASE_SECONDS", "0")
@@ -135,10 +139,80 @@ def test_ai_classifier_retries_transient_failures(monkeypatch):
     assert len(calls) == 3
     assert result.label == "PURCHASE_COUNTERFEIT"
     assert result.confidence == "0.93"
-    assert result.model == "test-haiku"
+    assert result.model == "test-sonnet"
     assert "source_url: https://x.com/user/status/1" in calls[-1]
     assert "qoo10_product_url: https://www.qoo10.jp/g/627681006" in calls[-1]
 
+
+def test_claude_cli_uses_sonnet_structured_output_without_api_key(monkeypatch):
+    monkeypatch.setenv("SNS_AI_PROVIDER", "claude_cli")
+    monkeypatch.delenv("SNS_AI_MODEL", raising=False)
+    monkeypatch.setenv("SNS_AI_CLAUDE_BARE", "true")
+    monkeypatch.setenv(
+        "SNS_AI_CLAUDE_API_KEY_HELPER",
+        "npx @ebay/claude-code-token@latest get_token",
+    )
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        sns_enrichment.shutil,
+        "which",
+        lambda _command: r"C:\Users\ragong\.local\bin\claude.exe",
+    )
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "is_error": False,
+                "structured_output": {
+                    "label": "PURCHASE_COUNTERFEIT",
+                    "confidence": 0.96,
+                    "reason": "Qoo10 구매 후 가품이라고 명시했습니다.",
+                    "evidence": "Qoo10で購入した商品は偽物でした",
+                },
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr(sns_enrichment.subprocess, "run", fake_run)
+    classifier = SnsAiClassifier()
+    result = classifier.analyze(
+        text="Qoo10で購入して受け取った商品は偽物でした。返金を依頼しました。",
+        source="google",
+        keyword="Qoo10 偽物",
+        evidence="Qoo10で購入した商品は偽物でした",
+    )
+
+    assert classifier.enabled is True
+    assert classifier.model == "claude-sonnet-4-6"
+    assert result.label == "PURCHASE_COUNTERFEIT"
+    assert result.confidence == "0.96"
+    assert "--bare" in captured["args"]
+    assert captured["args"][captured["args"].index("--model") + 1] == "claude-sonnet-4-6"
+    settings = json.loads(captured["args"][captured["args"].index("--settings") + 1])
+    assert settings["apiKeyHelper"].startswith("npx @ebay/claude-code-token")
+    assert captured["env"]["NODE_OPTIONS"].endswith("--use-system-ca")
+    assert "ANTHROPIC_API_KEY" not in captured["env"]
+
+
+def test_claude_cli_without_executable_stays_pending(monkeypatch):
+    monkeypatch.setenv("SNS_AI_PROVIDER", "claude_cli")
+    monkeypatch.delenv("SNS_AI_MODEL", raising=False)
+    monkeypatch.setattr(sns_enrichment.shutil, "which", lambda _command: None)
+
+    classifier = SnsAiClassifier()
+    result = classifier.analyze(
+        text="Qoo10で購入した商品は偽物でした。返金を依頼しました。",
+        source="google",
+        keyword="Qoo10 偽物",
+        evidence="偽物でした",
+    )
+
+    assert classifier.enabled is False
+    assert result.label == "PENDING"
+    assert result.reason == "Claude Code CLI 미설치"
 
 def test_ai_prompt_requires_same_context_purchase_and_counterfeit():
     prompt = SnsAiClassifier._prompt(
