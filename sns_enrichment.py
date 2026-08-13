@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
@@ -20,6 +21,12 @@ AI_LABELS = {
     "PENDING",
     "ERROR",
 }
+DEFAULT_AI_MODELS = {
+    "anthropic": "claude-haiku-4-5-20251001",
+    "openai": "gpt-4o-mini",
+}
+
+
 
 _PRODUCT_PATTERNS = [
     re.compile(r"[?&]goodscode=(\d+)", re.IGNORECASE),
@@ -120,24 +127,54 @@ class SnsAiClassifier:
 
     def __init__(self) -> None:
         self.provider = os.getenv("SNS_AI_PROVIDER", "disabled").strip().lower()
-        self.model = os.getenv("SNS_AI_MODEL", "").strip()
+        self.model = (
+            os.getenv("SNS_AI_MODEL", "").strip()
+            or DEFAULT_AI_MODELS.get(self.provider, "")
+        )
         self.max_rows = max(0, int(os.getenv("SNS_AI_MAX_ROWS", "100")))
+        self.max_attempts = max(1, int(os.getenv("SNS_AI_MAX_ATTEMPTS", "3")))
+        self.timeout = max(10, int(os.getenv("SNS_AI_TIMEOUT_SECONDS", "45")))
+        self.retry_base_seconds = max(
+            0.0,
+            float(os.getenv("SNS_AI_RETRY_BASE_SECONDS", "2")),
+        )
         self._client: Any = None
 
     @property
-    def enabled(self) -> bool:
+    def configured(self) -> bool:
         return self.provider in {"anthropic", "openai"} and bool(self.model)
 
+    @property
+    def api_key(self) -> str:
+        if self.provider == "anthropic":
+            return os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if self.provider == "openai":
+            return os.getenv("OPENAI_API_KEY", "").strip()
+        return ""
+
+    @property
+    def enabled(self) -> bool:
+        return self.configured and bool(self.api_key)
+
     def pending(self, evidence: str) -> AiResult:
+        if not self.configured:
+            reason = "AI 2차 분석 미설정"
+        elif not self.api_key:
+            reason = f"{self.provider} API 키 미설정"
+        else:
+            reason = "AI 분석 대기"
         return AiResult(
             label="PENDING",
             confidence="",
-            reason="AI 2차 분석 미설정",
+            reason=reason,
             evidence=evidence,
-            model="",
+            model=self.model if self.configured else "",
         )
 
-    def analyze(self, *, text: str, source: str, keyword: str, evidence: str) -> AiResult:
+    def analyze(
+        self, *, text: str, source: str, keyword: str, evidence: str,
+        source_url: str = "", qoo10_link: str = "",
+    ) -> AiResult:
         if not self.enabled:
             return self.pending(evidence)
         if len(normalize_text(text)) < 20:
@@ -149,9 +186,15 @@ class SnsAiClassifier:
                 model=self.model,
             )
 
-        prompt = self._prompt(text=text, source=source, keyword=keyword)
+        prompt = self._prompt(
+            text=text,
+            source=source,
+            keyword=keyword,
+            source_url=source_url,
+            qoo10_link=qoo10_link,
+        )
         try:
-            raw = self._call(prompt)
+            raw = self._call_with_retry(prompt)
             parsed = _extract_json_object(raw)
             label = str(parsed.get("label", "")).strip().upper()
             if label not in AI_LABELS - {"PENDING", "ERROR"}:
@@ -174,20 +217,32 @@ class SnsAiClassifier:
                 model=self.model,
             )
 
+    def _call_with_retry(self, prompt: str) -> str:
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return self._call(prompt)
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.max_attempts:
+                    delay = self.retry_base_seconds * (2 ** (attempt - 1))
+                    time.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("AI 분석 호출 실패")
+
     def _call(self, prompt: str) -> str:
         if self.provider == "anthropic":
             if self._client is None:
                 from anthropic import Anthropic
 
-                api_key = os.getenv("ANTHROPIC_API_KEY", "")
-                if not api_key:
-                    raise RuntimeError("ANTHROPIC_API_KEY 미설정")
-                self._client = Anthropic(api_key=api_key)
+                self._client = Anthropic(api_key=self.api_key)
             response = self._client.messages.create(
                 model=self.model,
                 max_tokens=500,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
+                timeout=self.timeout,
             )
             return "".join(
                 block.text for block in response.content if hasattr(block, "text")
@@ -197,10 +252,7 @@ class SnsAiClassifier:
             if self._client is None:
                 from openai import OpenAI
 
-                api_key = os.getenv("OPENAI_API_KEY", "")
-                if not api_key:
-                    raise RuntimeError("OPENAI_API_KEY 미설정")
-                self._client = OpenAI(api_key=api_key)
+                self._client = OpenAI(api_key=self.api_key)
             response = self._client.chat.completions.create(
                 model=self.model,
                 temperature=0,
@@ -212,19 +264,25 @@ class SnsAiClassifier:
                     },
                     {"role": "user", "content": prompt},
                 ],
+                timeout=self.timeout,
             )
             return response.choices[0].message.content or ""
 
         raise RuntimeError(f"지원하지 않는 SNS_AI_PROVIDER: {self.provider}")
 
     @staticmethod
-    def _prompt(*, text: str, source: str, keyword: str) -> str:
+    def _prompt(
+        *, text: str, source: str, keyword: str, source_url: str, qoo10_link: str,
+    ) -> str:
         return f"""
 당신은 Qoo10 위조품 SNS 모니터링의 2차 판정자입니다.
-게시물이 실제로 Qoo10에서 구매한 상품이 위조품·가품이었다는 부정적 경험인지 판정하세요.
+게시물이 실제로 Qoo10에서 구매·수령한 상품이 위조품·가품이었다는 부정적 경험인지 판정하세요.
+이 판정은 관리자 검토를 돕는 참고 정보이며 최종 조치 판단이 아닙니다.
+작성자 자신의 경험과 타인의 글 인용·검색 스니펫·일반 질문을 구분하세요.
+일본어, 한국어, 영어 문맥을 그대로 해석하세요.
 
 분류:
-- PURCHASE_COUNTERFEIT: Qoo10 구매·수령 상품이 가품이라는 실제 경험 또는 구체적 주장
+- PURCHASE_COUNTERFEIT: 작성자가 Qoo10에서 구매·수령했고 해당 상품이 가품이라고 명시한 실제 경험 또는 구체적 피해 주장
 - GENERAL_WARNING: 구별법, 일반 경고, 정보, 질문만 있고 구매 피해 경험은 아님
 - AD_OR_AFFILIATE: 광고, PR, 제휴, 판매 홍보
 - UNRELATED: Qoo10 위조품 문제와 문맥상 무관
@@ -234,9 +292,16 @@ class SnsAiClassifier:
 - 검색 키워드가 포함되었다는 이유만으로 PURCHASE_COUNTERFEIT로 분류하지 마세요.
 - 상품 링크만 있고 가품 피해 주장이 없으면 PURCHASE_COUNTERFEIT가 아닙니다.
 - 추측하지 말고 제공된 텍스트만 사용하세요.
+- Qoo10 구매 사실과 가품 주장이 둘 다 동일한 게시물 문맥에 있어야 PURCHASE_COUNTERFEIT입니다.
+- 단순 질문, 구별법, 중국산·중국배송 언급, 교환/양도 조건, 상품 링크 첨부만으로는 PURCHASE_COUNTERFEIT가 아닙니다.
+- 검색결과 스니펫이 서로 다른 문장을 합친 것으로 보이면 INSUFFICIENT_CONTENT 또는 UNRELATED로 분류하세요.
+- 광고·협찬·PR·affiliate·판매 홍보는 AD_OR_AFFILIATE입니다.
+- 판단 근거 문구가 없거나 원문 접근이 불가능하면 INSUFFICIENT_CONTENT입니다.
 
 source: {source}
 search_keyword: {keyword}
+source_url: {source_url}
+qoo10_product_url: {qoo10_link}
 content:
 {normalize_text(text)[:3000]}
 
@@ -279,6 +344,8 @@ def enrich_rows(
                 source=source,
                 keyword=keyword,
                 evidence=evidence,
+                source_url=str(row.get("url", "")),
+                qoo10_link=str(row.get("qoo10_link", "")),
             )
         else:
             result = classifier.pending(evidence)

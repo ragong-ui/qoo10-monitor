@@ -46,6 +46,10 @@ const REVIEWERS = [
   "Rani Gong", "Jihyun Kwon", "Minjong Jang", "Donghee Kim", "Whajoon Ryu",
   "Woongsoo Shin", "Kim Meekyoung", "Kim Jinsun", "Choi Yunju", "Hyejin Jegal",
 ];
+const AI_LABEL_VALUES = [
+  "PURCHASE_COUNTERFEIT", "GENERAL_WARNING", "AD_OR_AFFILIATE", "UNRELATED",
+  "INSUFFICIENT_CONTENT", "PENDING", "ERROR",
+];
 
 
 // ── GET ──────────────────────────────────────────────────────
@@ -77,6 +81,7 @@ function doPost(e) {
     const payload = JSON.parse(e.postData.contents || "{}");
     if (payload.action === "update") return handleUpdate(payload);
     if (payload.action === "batch_update") return handleBatchUpdate(payload);
+    if (payload.action === "ai_batch_update") return handleAiBatchUpdate(payload);
     return handleAppend(payload);
   } catch (err) {
     return jsonOut({ status: "error", message: String(err) });
@@ -143,6 +148,92 @@ function handleBatchUpdate(payload) {
   });
 }
 
+
+// ── AI 2차 분석 결과 전용 업데이트 ─────────────────────────────
+function handleAiBatchUpdate(payload) {
+  const changes = Array.isArray(payload.changes) ? payload.changes : [];
+  if (changes.length > 500) {
+    return jsonOut({ status: "error", message: "changes must be 500 rows or fewer" });
+  }
+
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(30000)) {
+    return jsonOut({ status: "error", message: "spreadsheet is busy" });
+  }
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const cache = {};
+    let changed = 0;
+    const errors = [];
+
+    for (let i = 0; i < changes.length; i++) {
+      try {
+        const item = changes[i] || {};
+        const sheetName = String(item.sheet || "");
+        if (DATA_SHEETS.indexOf(sheetName) < 0) throw new Error("invalid sheet");
+
+        if (!cache[sheetName]) {
+          const sheet = ss.getSheetByName(sheetName);
+          if (!sheet) throw new Error("sheet not found");
+          ensureDataSchema(sheet);
+          const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+          cache[sheetName] = { sheet: sheet, columns: headerMap(headers) };
+        }
+
+        const target = cache[sheetName];
+        const rowIndex = Number(item.row_index);
+        if (!rowIndex || rowIndex < 2 || rowIndex > target.sheet.getLastRow()) {
+          throw new Error("invalid row_index");
+        }
+
+        const sourceUrl = String(item.source_url || "");
+        const currentUrl = String(target.sheet.getRange(rowIndex, 3).getValue() || "");
+        if (sourceUrl && currentUrl !== sourceUrl) throw new Error("source URL mismatch");
+
+        const label = String(item.ai_label || "").toUpperCase();
+        if (AI_LABEL_VALUES.indexOf(label) < 0) throw new Error("invalid AI label");
+
+        const confidence = String(item.ai_confidence || "");
+        if (confidence) {
+          const score = Number(confidence);
+          if (!isFinite(score) || score < 0 || score > 1) {
+            throw new Error("invalid AI confidence");
+          }
+        }
+
+        const fieldValues = {
+          "AI 판정 / AI判定": label,
+          "AI 신뢰도 / AI信頼度": confidence,
+          "AI 판정 이유 / AI判定理由": String(item.ai_reason || "").slice(0, 500),
+          "AI 근거 / AI根拠": String(item.ai_evidence || "").slice(0, 500),
+          "AI 모델 / AI Model": String(item.ai_model || "").slice(0, 120),
+        };
+
+        let rowChanged = false;
+        Object.keys(fieldValues).forEach(function(header) {
+          const cell = target.sheet.getRange(rowIndex, target.columns[header]);
+          const nextValue = fieldValues[header];
+          if (String(cell.getValue() || "") !== nextValue) {
+            cell.setValue(nextValue);
+            rowChanged = true;
+          }
+        });
+        if (rowChanged) changed += 1;
+      } catch (err) {
+        errors.push({ index: i, message: String(err.message || err) });
+      }
+    }
+
+    return jsonOut({
+      status: errors.length ? "partial" : "ok",
+      changed: changed,
+      errors: errors,
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
 
 function applySingleUpdate(payload) {
   const sheetName = String(payload.sheet || "");
