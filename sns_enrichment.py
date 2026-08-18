@@ -50,6 +50,25 @@ AI_OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+AI_BATCH_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "row_id": {"type": "string"},
+                    **AI_OUTPUT_SCHEMA["properties"],
+                },
+                "required": ["row_id", *AI_OUTPUT_SCHEMA["required"]],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["results"],
+    "additionalProperties": False,
+}
 
 
 _PRODUCT_PATTERNS = [
@@ -311,7 +330,11 @@ class SnsAiClassifier:
 
         raise RuntimeError(f"지원하지 않는 SNS_AI_PROVIDER: {self.provider}")
 
-    def _call_claude_cli(self, prompt: str) -> str:
+    def _call_claude_cli(
+        self,
+        prompt: str,
+        schema: dict[str, Any] | None = None,
+    ) -> str:
         if not self.cli_path:
             raise RuntimeError("Claude Code CLI를 찾을 수 없습니다.")
 
@@ -331,7 +354,7 @@ class SnsAiClassifier:
             "-p",
             "--model", self.model,
             "--output-format", "json",
-            "--json-schema", json.dumps(AI_OUTPUT_SCHEMA, separators=(",", ":")),
+            "--json-schema", json.dumps(schema or AI_OUTPUT_SCHEMA, separators=(",", ":")),
             "--tools", "",
             "--permission-mode", "dontAsk",
             "--no-session-persistence",
@@ -374,6 +397,119 @@ class SnsAiClassifier:
         if isinstance(result, str) and result.strip():
             return result
         raise ValueError("Claude Code CLI 응답에 분석 결과가 없습니다.")
+
+    def analyze_batch(self, items: list[dict[str, Any]]) -> dict[str, AiResult]:
+        """여러 공개 게시물을 한 번의 Sonnet 호출로 판정하고 row_id별 결과를 반환한다."""
+        if not items:
+            return {}
+        if self.provider != "claude_cli":
+            return {
+                str(item["row_id"]): self.analyze(
+                    text=str(item.get("text", "")),
+                    source=str(item.get("source", "")),
+                    keyword=str(item.get("keyword", "")),
+                    evidence=str(item.get("evidence", "")),
+                    source_url=str(item.get("source_url", "")),
+                    qoo10_link=str(item.get("qoo10_link", "")),
+                )
+                for item in items
+            }
+
+        results: dict[str, AiResult] = {}
+        ready: list[dict[str, Any]] = []
+        for item in items:
+            row_id = str(item["row_id"])
+            evidence = str(item.get("evidence", ""))
+            if len(normalize_text(item.get("text", ""))) < 20:
+                results[row_id] = AiResult(
+                    label="INSUFFICIENT_CONTENT",
+                    confidence="0",
+                    reason="판정에 필요한 게시물 문맥이 부족합니다.",
+                    evidence=evidence,
+                    model=self.model,
+                )
+            else:
+                ready.append(item)
+
+        if not ready:
+            return results
+
+        expected = {str(item["row_id"]): item for item in ready}
+        try:
+            raw = self._call_claude_cli(
+                self._batch_prompt(ready),
+                AI_BATCH_OUTPUT_SCHEMA,
+            )
+            parsed = _extract_json_object(raw)
+            entries = parsed.get("results", [])
+            if not isinstance(entries, list):
+                raise ValueError("AI 배치 응답 results가 배열이 아닙니다.")
+
+            seen: set[str] = set()
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                row_id = str(entry.get("row_id", ""))
+                if row_id not in expected or row_id in seen:
+                    continue
+                label = str(entry.get("label", "")).strip().upper()
+                if label not in AI_LABELS - {"PENDING", "ERROR"}:
+                    continue
+                confidence = max(0.0, min(1.0, float(entry.get("confidence", 0))))
+                evidence = normalize_text(entry.get("evidence", ""))[:300]
+                results[row_id] = AiResult(
+                    label=label,
+                    confidence=f"{confidence:.2f}",
+                    reason=normalize_text(entry.get("reason", ""))[:300],
+                    evidence=evidence or str(expected[row_id].get("evidence", "")),
+                    model=self.model,
+                )
+                seen.add(row_id)
+
+            for row_id, item in expected.items():
+                if row_id not in results:
+                    results[row_id] = AiResult(
+                        label="ERROR",
+                        confidence="",
+                        reason="AI 배치 응답에서 해당 행 결과가 누락되었습니다.",
+                        evidence=str(item.get("evidence", "")),
+                        model=self.model,
+                    )
+        except Exception as exc:
+            for row_id, item in expected.items():
+                results[row_id] = AiResult(
+                    label="ERROR",
+                    confidence="",
+                    reason=f"AI 배치 분석 실패: {type(exc).__name__}",
+                    evidence=str(item.get("evidence", "")),
+                    model=self.model,
+                )
+        return results
+
+    @staticmethod
+    def _batch_prompt(items: list[dict[str, Any]]) -> str:
+        records = [
+            {
+                "row_id": str(item["row_id"]),
+                "source": str(item.get("source", "")),
+                "search_keyword": str(item.get("keyword", "")),
+                "source_url": str(item.get("source_url", "")),
+                "qoo10_product_url": str(item.get("qoo10_link", "")),
+                "content": normalize_text(item.get("text", ""))[:3000],
+            }
+            for item in items
+        ]
+        return (
+            "당신은 Qoo10 위조품 SNS 모니터링의 2차 판정자입니다. "
+            "각 record를 서로 독립적으로 판정하고 입력 row_id를 그대로 한 번씩 반환하세요.\n"
+            "PURCHASE_COUNTERFEIT는 작성자가 Qoo10에서 구매·수령한 상품이 가품이라고 "
+            "동일 게시물 문맥에서 구체적으로 주장한 경우에만 사용합니다.\n"
+            "GENERAL_WARNING은 구별법·일반 경고·질문·정보, AD_OR_AFFILIATE는 광고·PR·제휴·판매 홍보, "
+            "UNRELATED는 Qoo10 위조품 문제와 무관, INSUFFICIENT_CONTENT는 원문 부족·접근 불가입니다.\n"
+            "검색 키워드, 상품 링크, 중국산·중국배송 언급만으로 PURCHASE_COUNTERFEIT로 판정하지 마세요. "
+            "추측하지 말고 제공된 텍스트만 사용하세요.\n"
+            "records:\n" + json.dumps(records, ensure_ascii=False)
+        )
 
     @staticmethod
     def _prompt(

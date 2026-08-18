@@ -214,6 +214,57 @@ def test_claude_cli_without_executable_stays_pending(monkeypatch):
     assert result.label == "PENDING"
     assert result.reason == "Claude Code CLI 미설치"
 
+def test_claude_cli_batch_maps_each_row_and_marks_missing(monkeypatch):
+    monkeypatch.setenv("SNS_AI_PROVIDER", "claude_cli")
+    monkeypatch.delenv("SNS_AI_MODEL", raising=False)
+    monkeypatch.setattr(sns_enrichment.shutil, "which", lambda _command: "claude.exe")
+    classifier = SnsAiClassifier()
+    captured = {}
+
+    def fake_batch_call(prompt, schema=None):
+        captured["prompt"] = prompt
+        captured["schema"] = schema
+        return json.dumps({
+            "results": [{
+                "row_id": "google:2",
+                "label": "PURCHASE_COUNTERFEIT",
+                "confidence": 0.94,
+                "reason": "Qoo10 구매 가품 경험",
+                "evidence": "Qoo10で購入した商品は偽物でした",
+            }]
+        })
+
+    monkeypatch.setattr(classifier, "_call_claude_cli", fake_batch_call)
+    items = [
+        {
+            "row_id": "google:2",
+            "text": "Qoo10で購入して受け取った商品は偽物でした。返金を依頼しました。",
+            "source": "google",
+            "keyword": "Qoo10 偽物",
+            "evidence": "偽物でした",
+            "source_url": "https://example.com/2",
+            "qoo10_link": "",
+        },
+        {
+            "row_id": "x:3",
+            "text": "Qoo10の商品について偽物かどうか一般的な見分け方を質問しています。",
+            "source": "x",
+            "keyword": "Qoo10 偽物",
+            "evidence": "見分け方",
+            "source_url": "https://example.com/3",
+            "qoo10_link": "",
+        },
+    ]
+
+    results = classifier.analyze_batch(items)
+
+    assert results["google:2"].label == "PURCHASE_COUNTERFEIT"
+    assert results["google:2"].model == "claude-sonnet-4-6"
+    assert results["x:3"].label == "ERROR"
+    assert "누락" in results["x:3"].reason
+    assert captured["schema"] is sns_enrichment.AI_BATCH_OUTPUT_SCHEMA
+    assert '"row_id": "google:2"' in captured["prompt"]
+
 def test_ai_prompt_requires_same_context_purchase_and_counterfeit():
     prompt = SnsAiClassifier._prompt(
         text="Qoo10 偽物",
