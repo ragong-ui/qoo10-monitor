@@ -72,6 +72,9 @@ COMMON_EXTRA_MAP = {
     "조치 메모 / 対応メモ": "조치 메모",
     "최종 변경일 / 最終更新": "최종 변경일",
     "AI 모델 / AI Model": "AI 모델",
+    "원문 검증 / 原文確認": "원문 검증",
+    "원문 검증 사유 / 原文確認理由": "원문 검증 사유",
+    "원문 검증 일시 / 原文確認日時": "원문 검증 일시",
 }
 COL_GOOGLE = {
     "검색일 / 検索日": "검색일",
@@ -189,6 +192,9 @@ def prepare_data(
         "조치 메모": "",
         "최종 변경일": "",
         "AI 모델": "",
+        "원문 검증": "",
+        "원문 검증 사유": "",
+        "원문 검증 일시": "",
     }
     for column, default in defaults.items():
         if column not in df.columns:
@@ -407,7 +413,7 @@ def render_source_tab(
     st.caption("✏️ 편집 내용은 브라우저 임시 상태이며, ‘변경사항 저장’을 눌러야 Google Sheets에 반영됩니다.")
     display_columns = [
         "검색일", kw_col, "URL", "개요", "Qoo10 상품", "상품번호", "Case ID",
-        "위험도", "탐지 근거", "AI 판정", "검색확인",
+        "위험도", "탐지 근거", "AI 판정", "원문 검증", "원문 검증 사유", "검색확인",
         "오탐지여부", "Status", "담당자", "조치 메모",
     ]
     editor_df = filtered[display_columns].copy()
@@ -446,7 +452,8 @@ def render_source_tab(
         },
         disabled=[
             "검색일", kw_col, "URL", "개요", "Qoo10 상품", "상품번호",
-            "Case ID", "위험도", "탐지 근거", "AI 판정", "검색확인",
+            "Case ID", "위험도", "탐지 근거", "AI 판정", "원문 검증",
+            "원문 검증 사유", "검색확인",
         ],
         hide_index=True,
         use_container_width=True,

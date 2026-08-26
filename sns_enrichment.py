@@ -570,8 +570,9 @@ def enrich_rows(
             str(row.get("qoo10_link", "")),
             str(row.get("url", "")),
         )
+        analysis_text = str(row.get("verified_text") or row.get("summary", ""))
         evidence = extract_detection_evidence(
-            str(row.get("summary", "")),
+            analysis_text,
             fraud_words,
         )
         row["product_number"] = product_number
@@ -581,7 +582,7 @@ def enrich_rows(
         keyword = str(row.get("keyword") or row.get("query") or "")
         if index < classifier.max_rows:
             result = classifier.analyze(
-                text=str(row.get("summary", "")),
+                text=analysis_text,
                 source=source,
                 keyword=keyword,
                 evidence=evidence,

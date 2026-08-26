@@ -23,6 +23,8 @@ HEADERS_GOOGLE = [
     "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
     "담당자 / 担当者", "조치 메모 / 対応メモ",
     "최종 변경일 / 最終更新", "AI 모델 / AI Model",
+    "원문 검증 / 原文確認", "원문 검증 사유 / 原文確認理由",
+    "원문 검증 일시 / 原文確認日時",
 ]
 HEADERS_X = [
     "검색일 / 検索日", "검색 쿼리 / クエリ", "게시물 URL / 投稿URL", "게시물 내용 / 投稿内容",
@@ -32,6 +34,8 @@ HEADERS_X = [
     "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
     "담당자 / 担当者", "조치 메모 / 対応メモ",
     "최종 변경일 / 最終更新", "AI 모델 / AI Model",
+    "원문 검증 / 原文確認", "원문 검증 사유 / 原文確認理由",
+    "원문 검증 일시 / 原文確認日時",
 ]
 
 
@@ -78,6 +82,9 @@ def write_to_sheets(rows: list, kr_list: list, sheet_type: str = "google"):
             row.get("ai_confidence", ""), row.get("ai_reason", ""),
             row.get("ai_evidence", ""), "", "", "",
             row.get("ai_model", ""),
+            row.get("page_verification", ""),
+            row.get("page_verification_reason", ""),
+            row.get("page_verified_at", ""),
         ])
 
     payload = {

@@ -20,6 +20,9 @@ const EXTRA_HEADERS = [
   "조치 메모 / 対応メモ",      // R
   "최종 변경일 / 最終更新",     // S
   "AI 모델 / AI Model",         // T
+  "원문 검증 / 原文確認",       // U
+  "원문 검증 사유 / 原文確認理由", // V
+  "원문 검증 일시 / 原文確認日時", // W
 ];
 
 const HISTORY_HEADERS = [
@@ -594,6 +597,7 @@ function applyColumnWidths(sheet) {
   const widths = [
     90, 150, 250, 350, 150, 80, 100, 90, 110, 120,
     170, 350, 150, 100, 260, 300, 120, 240, 150, 180,
+    120, 300, 160,
   ];
   widths.forEach(function(width, index) {
     sheet.setColumnWidth(index + 1, width);

@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from reviewers import excel_validation_formula
 from sns_enrichment import enrich_rows
+from sns_page_verifier import verify_rows
 from tls_utils import enable_system_trust_store
 
 enable_system_trust_store()
@@ -307,6 +308,8 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
         "AI 판정 이유 / AI判定理由", "AI 근거 / AI根拠",
         "담당자 / 担当者", "조치 메모 / 対応メモ",
         "최종 변경일 / 最終更新", "AI 모델 / AI Model",
+        "원문 검증 / 原文確認", "원문 검증 사유 / 原文確認理由",
+        "원문 검증 일시 / 原文確認日時",
     ]
     ws.append(headers)
 
@@ -332,6 +335,9 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
             r.get("ai_confidence", ""), r.get("ai_reason", ""),
             r.get("ai_evidence", ""), "", "", "",
             r.get("ai_model", ""),
+            r.get("page_verification", ""),
+            r.get("page_verification_reason", ""),
+            r.get("page_verified_at", ""),
         ])
         fill = high_fill if r["likelihood"] == "HIGH" else med_fill
         for c in ws[ws.max_row]:
@@ -345,8 +351,8 @@ def save_excel(rows: list[dict], date_str: str) -> Path:
             g_cell.font = Font(bold=False, color="0563C1", underline="single")
             g_cell.fill = fill
     for col, w in zip(
-        "ABCDEFGHIJKLMNOPQRST",
-        [12, 20, 55, 80, 50, 10, 12, 12, 14, 16, 24, 60, 22, 14, 45, 60, 18, 35, 20, 24],
+        "ABCDEFGHIJKLMNOPQRSTUVW",
+        [12, 20, 55, 80, 50, 10, 12, 12, 14, 16, 24, 60, 22, 14, 45, 60, 18, 35, 20, 24, 16, 45, 24],
     ):
         ws.column_dimensions[col].width = w
 
@@ -483,6 +489,7 @@ def main():
     print(f"  方式: Yahoo! リアルタイム検索 API / クエリ数: {len(X_QUERIES)} / 直近2日")
 
     rows = run_x_searches()
+    rows = verify_rows(rows, _FRAUD_WORDS, source="x", results_dir=RESULTS_DIR)
     enrich_rows(rows, _FRAUD_WORDS, source="x")
 
     high    = sum(1 for r in rows if r["likelihood"] == "HIGH")
