@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from reviewers import excel_validation_formula
 from sns_enrichment import enrich_rows
 from sns_page_verifier import verify_rows
+from sns_precision import COMMON_EXCLUDE_KEYWORDS, contains_hard_exclusion
 from tls_utils import enable_system_trust_store
 
 enable_system_trust_store()
@@ -52,14 +53,7 @@ _FRAUD_WORDS = [
     "中国",
 ]
 
-EXCLUDE_KEYWORDS = [
-    "見分け方", "見分け方法",
-    "#PR", "#広告", "#ad", "#sponsored", "#タイアップ", "#案件",
-    "弊社が判断した場合",
-    "キャッチコピー",
-    # 詐欺 오탐지 방지: 메이크업 변신 관련 TikTok 용어
-    "詐欺メイク", "すっぴん詐欺",
-]
+EXCLUDE_KEYWORDS = list(COMMON_EXCLUDE_KEYWORDS)
 
 X_QUERIES = [
     # Qoo10 直接関連 (13種)
@@ -218,7 +212,7 @@ def run_x_searches() -> list[dict]:
                 continue
 
             # 広告・ガイド系 하드 제외
-            if any(w in text for w in EXCLUDE_KEYWORDS):
+            if contains_hard_exclusion(text):
                 continue
 
             # クエリ語とfake系ワードが100文字以内に共存するか確認

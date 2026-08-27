@@ -5,6 +5,7 @@ from pathlib import Path
 import sns_page_verifier
 from sns_page_verifier import (
     PageVerification,
+    choose_page_context,
     proximity_evidence,
     verify_rows,
 )
@@ -31,6 +32,31 @@ def test_megawari_uses_megawari_anchor():
     )
     assert "メガ割" in evidence
     assert "偽物" in evidence
+
+
+def test_social_context_prefers_post_metadata_over_recommendation_body():
+    context, focused = choose_page_context(
+        title="TikTok",
+        metadata="Qoo10メガ割で購入した商品が偽物でした。返品を依頼しています。",
+        main_text="",
+        body_text="おすすめ動画 Qoo10 セール " + ("別動画の偽物情報 " * 50),
+        social=True,
+    )
+    assert focused is True
+    assert "返品" in context
+    assert "おすすめ動画" not in context
+
+
+def test_general_page_context_prefers_article_text_over_sidebar():
+    context, focused = choose_page_context(
+        title="記事",
+        metadata="",
+        main_text="本文です。" * 30,
+        body_text=("本文です。" * 30) + ("サイドバー Qoo10 偽物 " * 30),
+        social=False,
+    )
+    assert focused is True
+    assert "サイドバー" not in context
 
 
 def test_verify_rows_filters_only_mismatch(monkeypatch, tmp_path: Path):

@@ -23,6 +23,12 @@ from dotenv import load_dotenv
 from reviewers import excel_validation_formula
 from sns_enrichment import enrich_rows
 from sns_page_verifier import verify_rows
+from sns_precision import (
+    COMMON_EXCLUDE_KEYWORDS,
+    GOOGLE_EXCLUDE_DOMAINS,
+    contains_hard_exclusion,
+    is_excluded_domain,
+)
 from tls_utils import enable_system_trust_store
 
 enable_system_trust_store()
@@ -111,35 +117,13 @@ GUIDE_SIGNALS = [
     "見極め", "注意点", "安全な買い方",
 ]
 # 以下のワードが含まれる場合は常に除外（has_qoo10_ref 例外も適用しない）
-EXCLUDE_KEYWORDS = [
-    # ガイド・情報系
-    "見分け方", "見分け方法",
-    # 유료광고/PR 표시
-    "#PR", "#広告", "#ad", "#sponsored", "#タイアップ", "#案件",
-    # Qoo10 공식 약관/캠페인 보일러플레이트 (사용자 피해 신고문에는 나오지 않음)
-    "弊社が判断した場合",
-    # コピー 오탐지 방지: キャッチコピー(캐치카피)에 "コピー"가 포함되어 오탐지됨
-    "キャッチコピー",
-    # 詐欺 오탐지 방지: 메이크업 변신 관련 TikTok 용어 (Qoo10 상품 사기와 무관)
-    "詐欺メイク", "すっぴん詐欺",
-]
+EXCLUDE_KEYWORDS = list(COMMON_EXCLUDE_KEYWORDS)
 SOCIAL_DOMAINS = [
     "x.com", "twitter.com", "instagram.com", "tiktok.com",
     "note.com", "ameblo.jp", "youtube.com", "threads.net", "threads.com",
 ]
-# 오탐지율이 높은 도메인 제외 (Google Sheets 실적 데이터 기반 — 2026-07-23 추가)
-EXCLUDE_DOMAINS = [
-    "lipscosme.com",             # 화장품 리뷰/가격 집계 (16건 오탐지)
-    "ecnomikata.com",            # EC업계 뉴스 (13건 오탐지)
-    "bibicopy.net",              # Qoo10 무관 외부 사이트 (6건 오탐지)
-    "47news.jp",                 # 뉴스 사이트 (4건 오탐지)
-    "healthbusiness-online.com", # 비즈니스 뉴스 (4건 오탐지)
-    "indeed.com",                # 구인 사이트 (4건 오탐지)
-    "aucfan.com",                # 경매 가격 비교 (4건 오탐지)
-    "app-tatsujin.com",          # 앱 관련 사이트 (3건 오탐지)
-    "kigencheck.jp",             # 유통기한 체크 사이트 (2건 오탐지)
-    "bigankipatrol.com",         # 미용 제품 사이트 (2건 오탐지)
-]
+# 누적 O/X·AI·조치 메모를 백테스트한 공통 정밀도 규칙.
+EXCLUDE_DOMAINS = list(GOOGLE_EXCLUDE_DOMAINS)
 
 QOO10_URL_RE = re.compile(r"https?://(?:www\.)?qoo10\.jp/\S+")
 
@@ -262,7 +246,7 @@ def run_searches() -> list[dict]:
                     continue
 
                 # 오탐지율이 높은 도메인 제외 (실적 데이터 기반)
-                if any(d in url for d in EXCLUDE_DOMAINS):
+                if is_excluded_domain(url, source="google"):
                     continue
 
                 # 이미 보고된 URL 중복 제외
@@ -277,7 +261,7 @@ def run_searches() -> list[dict]:
                     continue
 
                 # 見分け方/広告系は常に除外
-                if any(w in text for w in EXCLUDE_KEYWORDS):
+                if contains_hard_exclusion(text):
                     continue
 
                 # 스니펫/타이틀에 Qoo10 URL이 포함된 외부 페이지는 포함

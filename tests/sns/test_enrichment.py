@@ -277,3 +277,6 @@ def test_ai_prompt_requires_same_context_purchase_and_counterfeit():
     assert "둘 다 동일한 게시물 문맥" in prompt
     assert "최종 조치 판단이 아닙니다" in prompt
     assert "중국산·중국배송 언급" in prompt
+    assert "안전한 구매 대안" in prompt
+    assert "배너·추천글·검색 목록" in prompt
+    assert "상품 제공" in prompt

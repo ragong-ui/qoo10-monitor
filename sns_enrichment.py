@@ -506,6 +506,9 @@ class SnsAiClassifier:
             "동일 게시물 문맥에서 구체적으로 주장한 경우에만 사용합니다.\n"
             "GENERAL_WARNING은 구별법·일반 경고·질문·정보, AD_OR_AFFILIATE는 광고·PR·제휴·판매 홍보, "
             "UNRELATED는 Qoo10 위조품 문제와 무관, INSUFFICIENT_CONTENT는 원문 부족·접근 불가입니다.\n"
+            "Qoo10이 다른 판매처의 사기·위조품 대신 안전한 구매 대안으로만 언급되거나, "
+            "위조품 표현이 배너·추천글·검색 목록의 다른 항목에 있으면 UNRELATED입니다. "
+            "명시적 상품 제공·협찬·브랜드 공식 홍보는 AD_OR_AFFILIATE입니다.\n"
             "검색 키워드, 상품 링크, 중국산·중국배송 언급만으로 PURCHASE_COUNTERFEIT로 판정하지 마세요. "
             "추측하지 말고 제공된 텍스트만 사용하세요.\n"
             "records:\n" + json.dumps(records, ensure_ascii=False)
@@ -536,7 +539,9 @@ class SnsAiClassifier:
 - Qoo10 구매 사실과 가품 주장이 둘 다 동일한 게시물 문맥에 있어야 PURCHASE_COUNTERFEIT입니다.
 - 단순 질문, 구별법, 중국산·중국배송 언급, 교환/양도 조건, 상품 링크 첨부만으로는 PURCHASE_COUNTERFEIT가 아닙니다.
 - 검색결과 스니펫이 서로 다른 문장을 합친 것으로 보이면 INSUFFICIENT_CONTENT 또는 UNRELATED로 분류하세요.
-- 광고·협찬·PR·affiliate·판매 홍보는 AD_OR_AFFILIATE입니다.
+- Qoo10이 다른 판매처의 사기·위조품 대신 안전한 구매 대안으로만 언급되면 UNRELATED입니다.
+- 위조품 표현이 본문이 아니라 배너·추천글·검색 목록의 다른 항목에 있으면 UNRELATED입니다.
+- 광고·협찬·PR·affiliate·상품 제공·브랜드 공식 판매 홍보는 AD_OR_AFFILIATE입니다.
 - 판단 근거 문구가 없거나 원문 접근이 불가능하면 INSUFFICIENT_CONTENT입니다.
 
 source: {source}

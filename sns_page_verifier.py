@@ -48,6 +48,25 @@ def _is_social(url: str) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in _SOCIAL_HOSTS)
 
 
+def choose_page_context(
+    *, title: str, metadata: str, main_text: str, body_text: str, social: bool,
+) -> tuple[str, bool]:
+    """추천/배너가 섞인 전체 body보다 실제 게시물·본문 문맥을 우선한다.
+
+    반환값의 bool은 메타데이터나 main/article에서 충분한 집중 문맥을
+    확보했는지를 뜻한다.
+    """
+    title = normalize_page_text(title)
+    metadata = normalize_page_text(metadata)
+    main_text = normalize_page_text(main_text)
+    body_text = normalize_page_text(body_text)
+    focused = max((metadata, main_text), key=len)
+    minimum = 30 if social else 120
+    if len(focused) >= minimum:
+        return normalize_page_text(f"{title} {focused}"), True
+    return normalize_page_text(f"{title} {body_text}"), False
+
+
 def _anchors(keyword: str) -> list[str]:
     text = str(keyword or "")
     if "メガ割" in text:
@@ -181,7 +200,28 @@ class SnsPageVerifier:
             body = normalize_page_text(
                 page.locator("body").inner_text(timeout=min(8_000, self.timeout_ms))
             )
-            combined = normalize_page_text(f"{title} {body}")[:20_000]
+            metadata_parts = page.locator(
+                'meta[property="og:title"], meta[property="og:description"], '
+                'meta[name="twitter:title"], meta[name="twitter:description"], '
+                'meta[name="description"]'
+            ).evaluate_all(
+                "els => els.map(el => el.content || '').filter(Boolean)"
+            )
+            metadata = normalize_page_text(" ".join(metadata_parts))
+            main_parts = page.locator("article, main, [role='main']").all_inner_texts()
+            main_text = max(
+                (normalize_page_text(value) for value in main_parts),
+                key=len,
+                default="",
+            )
+            combined, focused = choose_page_context(
+                title=title,
+                metadata=metadata,
+                main_text=main_text,
+                body_text=body,
+                social=_is_social(url),
+            )
+            combined = combined[:20_000]
 
             evidence = proximity_evidence(combined, keyword, fraud_words)
             if evidence:
@@ -207,6 +247,13 @@ class SnsPageVerifier:
                 return PageVerification(
                     "UNAVAILABLE",
                     "판정 가능한 공개 원문 텍스트가 부족함",
+                    verified_at=verified_at,
+                )
+            if _is_social(url) and focused:
+                return PageVerification(
+                    "MISMATCH",
+                    "SNS 메타데이터/게시물 본문에서 기준어와 위조품 문맥을 확인하지 못함",
+                    verified_text=combined[:6_000],
                     verified_at=verified_at,
                 )
             if _is_social(url):
