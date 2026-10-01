@@ -1,0 +1,20 @@
+name: Sync production Streamlit branch
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Fast-forward deployed branch
+        run: git push origin HEAD:refs/heads/streamlit-recovery-20261001

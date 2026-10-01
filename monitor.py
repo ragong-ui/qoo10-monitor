@@ -96,7 +96,10 @@ EMAIL_FROM        = os.getenv("EMAIL_FROM", "ragong@ebay.com")
 EMAIL_TO_LIST     = [a.strip() for a in os.getenv("EMAIL_TO", "ragong@ebay.com").split(",")]
 EMAIL_PASSWORD    = os.getenv("EMAIL_PASSWORD", "")
 
-STREAMLIT_URL = "https://qoo10-monitor-kpcsgufhoixrfo6ekyxmc7.streamlit.app/"
+STREAMLIT_URL = os.getenv(
+    "STREAMLIT_URL",
+    "https://qoo10-monitor-recovery-20261001.streamlit.app/",
+)
 
 RESULTS_DIR  = Path(__file__).parent / "results"
 LOGS_DIR     = Path(__file__).parent / "logs"

@@ -28,7 +28,10 @@ EMAIL_FROM     = os.getenv("EMAIL_FROM", "")
 EMAIL_TO_LIST  = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
-STREAMLIT_URL = "https://qoo10-monitor-kpcsgufhoixrfo6ekyxmc7.streamlit.app/"
+STREAMLIT_URL = os.getenv(
+    "STREAMLIT_URL",
+    "https://qoo10-monitor-recovery-20261001.streamlit.app/",
+)
 
 BASE_DIR     = Path(__file__).parent
 RESULTS_DIR  = BASE_DIR / "results"
